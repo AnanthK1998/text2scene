@@ -1,4 +1,4 @@
-## 3D Scene Generation conditioned on Natural Languages
+## text2scene: 3D Scene Generation conditioned on Natural Languages
 
 
 ### Prepare Data
