@@ -81,3 +81,25 @@ or <br>
       A VTK window will be popped up like below.
    
       <img src="out/samples/scene0001_00/verify.png" alt="verify.png" width="60%" />
+## ScanRefer Dataset
+
+If you would like to access to the ScanRefer dataset, please fill out [this form](https://forms.gle/aLtzXN12DsYDMSXX6). Once your request is accepted, you will receive an email with the download link.
+
+> Note: In addition to language annotations in ScanRefer dataset, you also need to access the original ScanNet dataset. Please refer to the [ScanNet Instructions](data/scannet/README.md) for more details.
+
+Download the dataset by simply executing the wget command:
+```shell
+wget <download_link>
+```
+Download the ScanRefer dataset and unzip it under `datasets/`. 
+
+### ScanRefer Data format
+```
+"scene_id": [ScanNet scene id, e.g. "scene0000_00"],
+"object_id": [ScanNet object id (corresponds to "objectId" in ScanNet aggregation file), e.g. "34"],
+"object_name": [ScanNet object name (corresponds to "label" in ScanNet aggregation file), e.g. "coffee_table"],
+"ann_id": [description id, e.g. "1"],
+"description": [...],
+"token": [a list of tokens from the tokenized description] 
+```
+
