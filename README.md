@@ -20,8 +20,8 @@
     ```
 
 ### Prepare Data
-In our paper, we use the input point cloud from the [ScanNet](http://www.scan-net.org/) dataset, and the annotated instance CAD models from the [Scan2CAD](https://github.com/skanti/Scan2CAD) dataset.
-Scan2CAD aligns the object CAD models from [ShapeNetCore.v2](https://shapenet.org/) to each object in ScanNet, and we use these aligned CAD models as the ground-truth.
+In our paper, we use the annotated instance CAD models from the [Scan2CAD](https://github.com/skanti/Scan2CAD) dataset.
+Scan2CAD aligns the object CAD models from [ShapeNetCore.v2](https://shapenet.org/) to each object in [ScanNet](http://www.scan-net.org/), and we use these aligned CAD models as the ground-truth for the mesh branch.
 
 ##### Preprocess ScanNet and Scan2CAD data
 You can either directly download the processed samples [[link](https://tumde-my.sharepoint.com/:u:/g/personal/yinyu_nie_tum_de/EdTtS1JDX35DoZHj11Y5Vb8Bw89ollS_-pxiPGPjqvqZyA?e=H9pe3B)] to the directory below (recommended)
