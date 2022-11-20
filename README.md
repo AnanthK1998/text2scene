@@ -1,9 +1,27 @@
 ## text2scene: 3D Scene Generation conditioned on Natural Languages
 
+### Install
+1. This implementation uses Python 3.6, [Pytorch1.7.1](http://pytorch.org/), cudatoolkit 11.0. We recommend to use [conda](https://docs.conda.io/en/latest/miniconda.html) to deploy the environment.
+   * Install with conda:
+    ```
+    conda env create -f environment.yml
+    conda activate scenegen
+    ```
+    * Install [PyTorch3D](https://pytorch3d.org/), [CLIP](https://github.com/openai/CLIP)
+    ```
+    conda install pytorch3d -c pytorch3d
+    pip install ftfy regex tqdm
+    pip install git+https://github.com/openai/CLIP.git
+    ```
+
+    * Install with pip:
+    ```
+    pip install -r requirements.txt
+    ```
 
 ### Prepare Data
-In our paper, we use the input point cloud from the [ScanNet](http://www.scan-net.org/) dataset, and the annotated instance CAD models from the [Scan2CAD](https://github.com/skanti/Scan2CAD) dataset.
-Scan2CAD aligns the object CAD models from [ShapeNetCore.v2](https://shapenet.org/) to each object in ScanNet, and we use these aligned CAD models as the ground-truth.
+In our paper, we use the annotated instance CAD models from the [Scan2CAD](https://github.com/skanti/Scan2CAD) dataset.
+Scan2CAD aligns the object CAD models from [ShapeNetCore.v2](https://shapenet.org/) to each object in [ScanNet](http://www.scan-net.org/), and we use these aligned CAD models as the ground-truth for the mesh branch.
 
 ##### Preprocess ScanNet and Scan2CAD data
 You can either directly download the processed samples [[link](https://tumde-my.sharepoint.com/:u:/g/personal/yinyu_nie_tum_de/EdTtS1JDX35DoZHj11Y5Vb8Bw89ollS_-pxiPGPjqvqZyA?e=H9pe3B)] to the directory below (recommended)
@@ -81,7 +99,7 @@ or <br>
       A VTK window will be popped up like below.
    
       <img src="out/samples/scene0001_00/verify.png" alt="verify.png" width="60%" />
-#### ScanRefer Dataset
+##### ScanRefer Dataset
 
 If you would like to access to the ScanRefer dataset, please fill out [this form](https://forms.gle/aLtzXN12DsYDMSXX6). Once your request is accepted, you will receive an email with the download link.
 
@@ -93,7 +111,7 @@ wget <download_link>
 ```
 Download the ScanRefer dataset and unzip it under `datasets/`. 
 
-#### ScanRefer Data format
+##### ScanRefer Data format
 ```
 "scene_id": [ScanNet scene id, e.g. "scene0000_00"],
 "object_id": [ScanNet object id (corresponds to "objectId" in ScanNet aggregation file), e.g. "34"],
@@ -102,7 +120,7 @@ Download the ScanRefer dataset and unzip it under `datasets/`.
 "description": [...],
 "token": [a list of tokens from the tokenized description] 
 ```
-#### Preprocessing the ScanRefer dataset and combining it with above
+##### Preprocessing the ScanRefer dataset and combining it with above
 ```
 python utils/data_prep.py
 ```
