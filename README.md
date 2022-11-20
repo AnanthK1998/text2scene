@@ -22,7 +22,7 @@ or <br>
    ```
 3. Preprocess the ScanNet and Scan2CAD dataset for training by
    ```
-   cd RfDNet
+   cd text2scene
    python utils/scannet/gen_scannet_w_orientation.py
    ```
 
@@ -51,7 +51,7 @@ or <br>
    If it does not work, please delete the `./build` and `.so` file in `external/librender/` and recompile the pyrender by
    
     ```
-    cd RfDNet/external/librender
+    cd text2scene/external/librender
     rm -rf ./build ./*.so
     python setup.py build_ext --inplace
    ```
