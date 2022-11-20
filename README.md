@@ -7,6 +7,13 @@
     conda env create -f environment.yml
     conda activate scenegen
     ```
+    * Install [PyTorch3D](https://pytorch3d.org/), [CLIP](https://github.com/openai/CLIP)
+    ```
+    conda install pytorch3d -c pytorch3d
+    pip install ftfy regex tqdm
+    pip install git+https://github.com/openai/CLIP.git
+    ```
+
     * Install with pip:
     ```
     pip install -r requirements.txt
