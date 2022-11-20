@@ -1,5 +1,16 @@
 ## text2scene: 3D Scene Generation conditioned on Natural Languages
 
+### Install
+1. This implementation uses Python 3.6, [Pytorch1.7.1](http://pytorch.org/), cudatoolkit 11.0. We recommend to use [conda](https://docs.conda.io/en/latest/miniconda.html) to deploy the environment.
+   * Install with conda:
+    ```
+    conda env create -f environment.yml
+    conda activate scenegen
+    ```
+    * Install with pip:
+    ```
+    pip install -r requirements.txt
+    ```
 
 ### Prepare Data
 In our paper, we use the input point cloud from the [ScanNet](http://www.scan-net.org/) dataset, and the annotated instance CAD models from the [Scan2CAD](https://github.com/skanti/Scan2CAD) dataset.
