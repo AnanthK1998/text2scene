@@ -81,7 +81,7 @@ or <br>
       A VTK window will be popped up like below.
    
       <img src="out/samples/scene0001_00/verify.png" alt="verify.png" width="60%" />
-## ScanRefer Dataset
+#### ScanRefer Dataset
 
 If you would like to access to the ScanRefer dataset, please fill out [this form](https://forms.gle/aLtzXN12DsYDMSXX6). Once your request is accepted, you will receive an email with the download link.
 
@@ -93,7 +93,7 @@ wget <download_link>
 ```
 Download the ScanRefer dataset and unzip it under `datasets/`. 
 
-### ScanRefer Data format
+#### ScanRefer Data format
 ```
 "scene_id": [ScanNet scene id, e.g. "scene0000_00"],
 "object_id": [ScanNet object id (corresponds to "objectId" in ScanNet aggregation file), e.g. "34"],
@@ -102,4 +102,7 @@ Download the ScanRefer dataset and unzip it under `datasets/`.
 "description": [...],
 "token": [a list of tokens from the tokenized description] 
 ```
-
+#### Preprocessing the ScanRefer dataset and combining it with above
+```
+python utils/data_prep.py
+```
