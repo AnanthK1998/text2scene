@@ -6,6 +6,7 @@ cycler==0.10.0
 Cython==0.29.22
 dataclasses
 decorator==4.4.2
+easydict
 google-auth==1.28.0
 google-auth-oauthlib==0.4.3
 grpcio==1.36.1
