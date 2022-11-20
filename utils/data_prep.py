@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 CONF = EasyDict()
 CONF.PATH = EasyDict()
-CONF.PATH.BASE = "/home/kaly/research/RfDNet/"
+CONF.PATH.BASE = "/home/kaly/research/RfDNet/" #add path to the project directory
 CONF.PATH.DATA = os.path.join(CONF.PATH.BASE, "datasets")
 CONF.PATH.SCANNET = os.path.join(CONF.PATH.DATA, "scannet/scannet")
 CONF.PATH.LIB = os.path.join(CONF.PATH.BASE, "lib")
