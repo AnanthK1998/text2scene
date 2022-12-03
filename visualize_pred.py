@@ -237,8 +237,8 @@ eta = 1.
 def demo():
     tqdm.write('\nSampling...')
     torch.manual_seed(seed)
-    net1 = torch.load('/home/kaly/research/text2scene/pose_weights/pose_diffusion_epoch_21.pth')['model']
-    net2 = torch.load('/home/kaly/research/text2scene/pose_weights/pose_diffusion_epoch_21.pth')['model_ema']
+    net1 = torch.load('/home/kaly/research/text2scene/pose_weights/pose_diffusion_epoch_33.pth')['model']
+    net2 = torch.load('/home/kaly/research/text2scene/pose_weights/pose_diffusion_epoch_33.pth')['model_ema']
     model.load_state_dict(net1)
     model_ema.load_state_dict(net2)
     noise = torch.randn([1,7,40], device=device)
@@ -251,7 +251,7 @@ def demo():
     pred_scene_list = get_scene_list(fakes,meshes)
     gt = train_set[0]['pose'].unsqueeze(0).to(device)
     gt_scene_list = get_scene_list(gt,meshes)
-    images = torch.zeros((2,256,256,4))
+    images = torch.zeros((2,224,224,4))
     
     count = 0
     for j in pred_scene_list:
@@ -263,7 +263,7 @@ def demo():
         temp.export('/home/kaly/research/text2scene/results/pred.obj')
         count+=1
 
-        count+=1
+        
     
     
     for j in gt_scene_list:
