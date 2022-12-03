@@ -59,7 +59,7 @@ for i in tqdm(train_scene_list):
         object_dict = {}
         object_dict['object_id'] = object
         object_dict['object_data'] = {}
-        with open(CONF.PATH.DATA+"/ScanRefer_filtered_val.json") as json_file:
+        with open(CONF.PATH.DATA+"/ScanRefer_filtered_train.json") as json_file:
             text_data = json.load(json_file)
         for text_dict in text_data:
             if text_dict['scene_id']==i and text_dict['object_id'] == str(object) and text_dict['ann_id']=='0':
@@ -71,6 +71,8 @@ for i in tqdm(train_scene_list):
                 object_dict['object_data']['shapenet_id'] = pose_dict['shapenet_id']
         
         scene_dict['objects'].append(object_dict)
+    if len(scene_dict['objects'])==1:
+        continue
     data.append(scene_dict)
     
     
@@ -107,6 +109,9 @@ for i in tqdm(val_scene_list):
                 object_dict['object_data']['shapenet_id'] = pose_dict['shapenet_id']
         
         scene_dict['objects'].append(object_dict)
+    ## ELIMINATE SINGLE OBJECT SCENES, CAUSES ERROR IN DATALOADER OTHERWISE
+    if len(scene_dict['objects'])==1:
+        continue
     data.append(scene_dict)
     
     

@@ -29,16 +29,17 @@ from pytorch3d.renderer import (
     RasterizationSettings, MeshRenderer, MeshRasterizer, BlendParams,
     SoftSilhouetteShader, HardPhongShader, PointLights, TexturesVertex,
 )
+import torchvision.transforms as T
 import numpy as np
 import sys
 sys.path.append('.')
 import os
-from configs.path_config import PathConfig, ScanNet_OBJ_CLASS_IDS
-import vtk
-from utils.scannet.visualization.vis_scannet import Vis_Scannet
+
+
+
 import numpy as np
 from utils.shapenet import ShapeNetv2_Watertight_Scaled_Simplified_path
-from vtk.util.numpy_support import vtk_to_numpy, numpy_to_vtk
+
 from utils.pc_util import rotz
 import pickle
 import random
@@ -49,8 +50,11 @@ from dvis import dvis
 
 device = 'cuda:0'
 
+import warnings
+warnings.filterwarnings('ignore')
+
 class PoseGen(Dataset):
-    def __init__(self, split="train",overfit=True):
+    def __init__(self, split="train",overfit=False,use_cache= False):
         self.split = split
         self.overfit = overfit
         if self.split == 'train':
@@ -59,7 +63,13 @@ class PoseGen(Dataset):
             self.data =pickle.load( open( "/home/kaly/research/RfDNet/datasets/scenegen_val.pkl","rb"))
         if self.overfit:
             self.data = self.data[0:32]
-    
+        self.clip_model,_ = clip.load('ViT-B/32', 'cpu', jit=True)
+        self.use_cache = use_cache
+        self.cached_data = []
+        # self.transform = self.transform = T.Compose([
+        #     T.ToTensor(),
+        #     T.Normalize((0.5),(0.5))
+        # ])
     def __len__(self):
         return len(self.data)
     
@@ -68,66 +78,74 @@ class PoseGen(Dataset):
         b=1
         text_embeddings = torch.zeros((40,512))
         box3D = torch.zeros((40,7))
-        clip_model, preprocess = clip.load('ViT-B/32', 'cpu', jit=True)
         data = self.data[index]
         count=0
-        max1 = torch.tensor([[[3.7593],
-                 [7.5061],
-                 [2.1705],
-                 [3.3867],
-                 [4.4751],
-                 [2.8320],
-                 [3.1415]]])
-        min1 = torch.tensor([[[-3.7312],
-                 [-7.5617],
-                 [-0.3567],
-                 [ 0.0000],
-                 [ 0.0000],
-                 [ 0.0000],
-                 [-3.1416]]])
-        verts_list = []
-        faces_list = []
+        # max1 = torch.tensor([[[3.7593],
+        #          [7.5061],
+        #          [2.1705],
+        #          [3.3867],
+        #          [4.4751],
+        #          [2.8320],
+        #          [3.1415]]])
+        # min1 = torch.tensor([[[-3.7312],
+        #          [-7.5617],
+        #          [-0.3567],
+        #          [ 0.0000],
+        #          [ 0.0000],
+        #          [ 0.0000],
+        #          [-3.1416]]])
+        max2= torch.tensor(7.0983) 
+        min2= torch.tensor(-3.0967)
+        max1 = torch.tensor(7.5061) 
+        min1 = torch.tensor(-7.5617)
         gt_meshes = []
-        for i in data['objects']:
-            try:
-                text_embed = clip_model.encode_text(clip.tokenize(i['object_data']['text']))
-                pose = torch.tensor(i['object_data']['box3D'])
-                text_embeddings[count] = text_embed.detach()
-                box3D[count] = pose
-                shapenet_model = os.path.join(ShapeNetv2_Watertight_Scaled_Simplified_path, i['object_data']['shapenet_catid'], i['object_data']['shapenet_id'] + '.off')
-                # print("Loading")
-                # mesh = IO.load_mesh(shapenet_model)
-                tmesh = trimesh.load(shapenet_model)
+        if not self.use_cache:
+            for i in data['objects']:
+                try:
+                    text_embed = self.clip_model.encode_text(clip.tokenize(i['object_data']['text']))
+                    pose = torch.tensor(i['object_data']['box3D'])
+                    text_embeddings[count] = text_embed.detach()
+                    box3D[count] = pose
+                    shapenet_model = os.path.join('/home/kaly/research/RfDNet/'+ShapeNetv2_Watertight_Scaled_Simplified_path, i['object_data']['shapenet_catid'], i['object_data']['shapenet_id'] + '.off')
+                    
+                    tmesh = trimesh.load(shapenet_model)
+
+                    verts_rgb = torch.ones_like(torch.tensor(np.asarray(tmesh.vertices)),dtype= torch.float32)[None]  # (1, V, 3)
+                    textures = TexturesVertex(verts_features=verts_rgb)
+                    gt_meshes.append(Meshes(verts=[torch.tensor(np.asarray(tmesh.vertices),dtype=torch.float32)],faces=[torch.tensor(np.asarray(tmesh.faces),dtype=torch.float32)],textures=textures))
+                    count+=1
+                except KeyError :
+                    continue
+            
+            if count<40:
+                text_embeddings[count:40] = text_embeddings[count-1]
+                box3D[count:40] = box3D[count-1]
+                gt_meshes.extend([gt_meshes[-1]]*(40-count))
                 
-                verts_rgb = torch.ones_like(torch.tensor(np.asarray(tmesh.vertices)),dtype= torch.float32)[None]  # (1, V, 3)
-                textures = TexturesVertex(verts_features=verts_rgb)
-                # verts = torch.tensor(np.asarray(mesh.verts_padded()),dtype=torch.float32)
-                # faces = torch.tensor(np.asarray(mesh.faces_padded()),dtype=torch.float32)
-                gt_meshes.append(Meshes(verts=[torch.tensor(np.asarray(tmesh.vertices),dtype=torch.float32).to(device)],faces=[torch.tensor(np.asarray(tmesh.faces),dtype=torch.float32).to(device)],textures=textures))
-                # mesh = Meshes(verts=[torch.tensor(np.asarray(tmesh.vertices),dtype=torch.float32).to(device)],faces=[torch.tensor(np.asarray(tmesh.faces),dtype=torch.float32).to(device)],textures=textures)
-                
-                # verts_list.append(mesh.verts_packed())
-                # faces_list.append(mesh.faces_packed())
-                count+=1
-            except:
-                continue
-        if count<40:
-            text_embeddings[count:40] = text_embeddings[count-1]
-            box3D[count:40] = box3D[count-1]
-            gt_meshes.extend([gt_meshes[-1]]*(40-count))
-            #verts_list.extend([verts_list[-1]]*(40-count))
-            #faces_list.extend([faces_list[-1]]*(40-count))
-        text_embeddings = text_embeddings.permute(1,0)
-        box3D = box3D.permute(1,0)
-        box3D = a + ((box3D - min1[0]) * (b - a) / (max1[0] - min1[0])) #min-max norm to [-1,1]
-        
-        new_data={}
-        new_data['pose']=box3D
-        new_data['text'] = text_embeddings
-        new_data['meshes'] = gt_meshes
-        #new_data['verts_list'] = verts_list
-        #new_data['faces_list'] = faces_list
+            text_embeddings = text_embeddings.permute(1,0)
+            box3D = box3D.permute(1,0)
+            box3D = a + ((box3D - min1) * (b - a) / (max1 - min1)) #min-max norm to [-1,1]
+            text_embeddings = a + ((text_embeddings - min2) * (b - a) / (max2 - min2))
+            # if self.transform:
+            #     box3D = self.transform(box3D.cpu().numpy())
+            #     text_embeddings= self.transform(text_embeddings.cpu().numpy())
+            new_data={}
+            new_data['pose']=box3D.squeeze(0)
+            new_data['text'] = text_embeddings.squeeze(0)
+            new_data['meshes'] = gt_meshes
+            self.cached_data.append(new_data)
+        # else:
+        #     new_data = self.cached_data[index]
+
         return new_data
     
-    def __len__(self):
-        return len(self.data)
+    # def set_use_cache(self, use_cache):
+    #     if use_cache:
+    #         self.cached_data = torch.stack(self.cached_data)
+    #     else:
+    #         self.cached_data = []
+    #     self.use_cache = use_cache
+
+
+    
+    

@@ -19,7 +19,7 @@ from pytorch3d.io import load_obj
 
 # datastructures
 from pytorch3d.structures import Meshes
-
+from torchvision import transforms
 # 3D transformations functions
 from pytorch3d.transforms import Rotate, Translate
 from pytorch3d.datasets import collate_batched_meshes
@@ -33,12 +33,12 @@ import numpy as np
 import sys
 sys.path.append('.')
 import os
-from configs.path_config import PathConfig, ScanNet_OBJ_CLASS_IDS
-import vtk
-from utils.scannet.visualization.vis_scannet import Vis_Scannet
+from torch import _VF
+
+
 import numpy as np
 from utils.shapenet import ShapeNetv2_Watertight_Scaled_Simplified_path
-from vtk.util.numpy_support import vtk_to_numpy, numpy_to_vtk
+
 from utils.pc_util import rotz
 import pickle
 import random
@@ -54,33 +54,39 @@ def render_loss(pred,gt,meshes):
     pred_scene_list = get_scene_list(pred,meshes) 
     gt_scene_list = get_scene_list(gt,meshes)
 
-    pred_images = torch.zeros((pred.shape[0],256,256,4))
-    gt_images = torch.zeros((pred.shape[0],256,256,4))
+    pred_images = torch.zeros((pred.shape[0],224,224,4))
+    gt_images = torch.zeros((pred.shape[0],224,224,4))
 
     count = 0
     for j in pred_scene_list:
-        pred_images[count] = render_top_view(j)
+        pred_images[count] = torch.tensor(render_top_view(j))
         count+=1
     
     count = 0
     for j in gt_scene_list:
-        gt_images[count] = render_top_view(j)
+        gt_images[count] = torch.tensor(render_top_view(j))
         count+=1
 
     criterion = nn.MSELoss()
-    return criterion(pred_images,gt_images)
+    return criterion(pred_images[:,:,:,:3],gt_images[:,:,:,:3])
 
 def clip_loss(text,pred,meshes,clip_model,preprocess):
     res =224
     pred_scene_list = get_scene_list(pred,meshes) 
-    pred_images = torch.zeros((pred.shape[0],256,256,4))
+    pred_images = torch.zeros((pred.shape[0],224,224,4))
     count = 0
     for j in pred_scene_list:
         pred_images[count] = render_top_view(j)
         count+=1
+    img_features = []
+    for i in pred_images:
+        pred_feats = preprocess(transforms.ToPILImage()(i[:,:,:3])).to(device)
+        img_features.append(clip_model.encode_image(pred_feats.unsqueeze(0)).repeat(1,40,1))
     
-    pred_images = preprocess(pred_images).to(device)
-    img_features = clip_model.encode_image(pred_images)
+    img_features = torch.stack(img_features).to(device).squeeze(1)
+    img_features = img_features.permute(0,2,1)
+    #print(img_features.shape)
     criterion = nn.CosineSimilarity()
     loss = torch.mean(criterion(img_features,text))
     return loss
+

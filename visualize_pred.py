@@ -20,14 +20,10 @@ import os
 from posegen import PoseGen
 import wandb
 from pytorch3d.datasets import collate_batched_meshes
-from loss import render_loss, clip_loss
-
-wandb.init(project="text2scene", entity="scenegen")
-import warnings
-warnings.filterwarnings('ignore')
-
-    
-# Utilities
+#from loss import render_loss, clip_loss
+from visualize_test import render_top_view, get_scene_list
+device='cuda'
+import trimesh
 
 @contextmanager
 def train_mode(model, mode=True):
@@ -214,34 +210,15 @@ def sample(model, x, steps, eta, classes):
     # If we are on the last timestep, output the denoised image
     return pred
 
-batch_size = 8
-
-
-train_set = PoseGen(overfit=True)#datasets.CIFAR10('data', train=True, download=True, transform=tf)
-train_dl = data.DataLoader(train_set, batch_size, shuffle=False,collate_fn=collate_batched_meshes,pin_memory=True)
-# val_set = datasets.CIFAR10('data', train=False, download=True, transform=tf)
-# val_dl = data.DataLoader(val_set, batch_size,
-#                          num_workers=4, persistent_workers=True, pin_memory=True)
-
-
-
-
-seed = 0
-
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print('Using device:', device)
 torch.manual_seed(0)
+seed=0
+train_set = PoseGen(overfit=True)
 
 model = Diffusion().to(device)
 model_ema = deepcopy(model)
-print('Model parameters:', sum(p.numel() for p in model.parameters()))
 
-opt = optim.Adam(model.parameters(), lr=2e-4)
-#scaler = torch.cuda.amp.GradScaler()
-epoch = 0
 
-# Use a low discrepancy quasi-random sequence to sample uniformly distributed
-# timesteps. This considerably reduces the between-batch variance of the loss.
 rng = torch.quasirandom.SobolEngine(1, scramble=True)
 
 ema_decay = 0.998
@@ -254,121 +231,55 @@ steps = 4097
 # 1 = full noise (DDPM)
 eta = 1.
 
-
-def eval_loss(model, rng, reals, classes,meshes):
-    # Draw uniformly distributed continuous timesteps
-    t = rng.draw(reals.shape[0])[:, 0].to(device)
-
-    # Calculate the noise schedule parameters for those timesteps
-    log_snrs = get_ddpm_schedule(t)
-    alphas, sigmas = get_alphas_sigmas(log_snrs)
-    weights = log_snrs.exp() / log_snrs.exp().add(1)
-
-    # Combine the ground truth images and the noise
-    alphas = alphas[:, None, None]
-    sigmas = sigmas[:, None, None]
-    noise = torch.randn_like(reals)
-    noised_reals = reals * alphas + noise * sigmas
-    targets = noise * alphas - reals * sigmas
-
-    # Compute the model output and the loss.
-    #with torch.cuda.amp.autocast():
-    v = model(noised_reals, log_snrs, classes)
-    return ((v - targets).pow(2).mean([1, 2]).mul(weights).mean()),render_loss(v,reals,meshes),clip_loss(classes,v,meshes,clip_model,preprocess)
-
-
-def train():
-    total_loss = []
-    for i, data in enumerate(tqdm(train_dl)):
-        opt.zero_grad()
-        pose = data['pose']
-        text = data['text']
-        pose = torch.stack(pose).to(device)
-        text = torch.stack(text).to(device)
-        meshes = data['meshes']
-        #print(pose.shape,text.shape)
-        # Evaluate the loss
-        generative_loss, loss_render,loss_clip = eval_loss(model, rng, pose, text,meshes) #
-        loss = generative_loss+loss_render-loss_clip
-        total_loss.append(loss.item())
-        # Do the optimizer step and EMA update
-        loss.backward()
-        opt.step()
-        #scaler.scale(loss).backward()
-        #scaler.step(opt)
-        ema_update(model, model_ema, 0.95 if epoch < 20 else ema_decay)
-        #scaler.update()
-
-        
-        tqdm.write(f'Epoch: {epoch}, iteration: {i}, total_loss: {mean(total_loss):g}, generative_loss: {generative_loss:g}, loss_render: {loss_render:g}, loss_clip: {loss_clip:g}') #
-        wandb.log({'total_loss':mean(total_loss),'generative_loss':generative_loss, 'loss_render':loss_render,'loss_clip':loss_clip})#
-
-@torch.no_grad()
-@torch.random.fork_rng()
-@eval_mode(model_ema)
-def val():
-    tqdm.write('\nValidating...')
-    torch.manual_seed(seed)
-    rng = torch.quasirandom.SobolEngine(1, scramble=True)
-    total_loss = 0
-    count = 0
-    for i, (reals, classes) in enumerate(tqdm(val_dl)):
-        reals = reals.to(device)
-        classes = classes.to(device)
-
-        loss = eval_loss(model_ema, rng, reals, classes)
-
-        total_loss += loss.item() * len(reals)
-        count += len(reals)
-    loss = total_loss / count
-    tqdm.write(f'Validation: Epoch: {epoch}, loss: {loss:g}')
-
-
 @torch.no_grad()
 @torch.random.fork_rng()
 @eval_mode(model_ema)
 def demo():
     tqdm.write('\nSampling...')
     torch.manual_seed(seed)
-
-    noise = torch.randn([4,7,40], device=device)
+    net1 = torch.load('/home/kaly/research/text2scene/pose_weights/pose_diffusion_epoch_21.pth')['model']
+    net2 = torch.load('/home/kaly/research/text2scene/pose_weights/pose_diffusion_epoch_21.pth')['model_ema']
+    model.load_state_dict(net1)
+    model_ema.load_state_dict(net2)
+    noise = torch.randn([1,7,40], device=device)
     #fakes_classes = torch.arange(2, device=device).repeat_interleave(2, 0)
-    fake_classes = torch.zeros((4,512,40),device=device)
-    for i in range(4):
-        fake_classes[i] = train_set[i]['text']
-    fakes = sample(model_ema, noise, steps, eta, fake_classes)
+    fake_classes = torch.zeros((1,512,40),device=device)
+    
+    fake_classes[0] = train_set[0]['text'].unsqueeze(0)
+    meshes = [train_set[0]['meshes']]
+    fakes = sample(model_ema, noise, steps, eta, fake_classes).to(device)
+    pred_scene_list = get_scene_list(fakes,meshes)
+    gt = train_set[0]['pose'].unsqueeze(0).to(device)
+    gt_scene_list = get_scene_list(gt,meshes)
+    images = torch.zeros((2,256,256,4))
+    
+    count = 0
+    for j in pred_scene_list:
+        
+        images[count] = torch.tensor(render_top_view(j))
+        verts= j.verts_packed().cpu().numpy()
+        faces = j.faces_packed().cpu().numpy()
+        temp = trimesh.Trimesh(vertices =verts,faces=faces)
+        temp.export('/home/kaly/research/text2scene/results/pred.obj')
+        count+=1
+
+        count+=1
+    
+    
+    for j in gt_scene_list:
+        
+        verts= j.verts_packed().cpu().numpy()
+        faces = j.faces_packed().cpu().numpy()
+        temp = trimesh.Trimesh(vertices =verts,faces=faces)
+        temp.export('/home/kaly/research/text2scene/results/gt.obj')
+        images[count] = torch.tensor(render_top_view(j))
+        count+=1
     #meshes = 
-    grid = utils.make_grid(fakes, 2).cpu()
-    filename = f'demo_{epoch:05}.png'
-    TF.to_pil_image(grid.add(1).div(2).clamp(0, 1)).save(filename)
+
+    epoch = torch.load('/home/kaly/research/text2scene/pose_weights/pose_diffusion_epoch_21.pth')['epoch']
+    grid = utils.make_grid(images, 2).cpu()
+    #filename = f'/home/kaly/research/text2scene/results/demo_{epoch:05}.png'
+    #TF.to_pil_image(grid.add(1).div(2).clamp(0, 1)).save(filename)
     #display.display(display.Image(filename))
     tqdm.write('')
-
-
-def save():
-    filename = '/home/kaly/research/text2scene/pose_weights/pose_diffusion_epoch_{}.pth'.format(epoch)
-    obj = {
-        'model': model.state_dict(),
-        'model_ema': model_ema.state_dict(),
-        'opt': opt.state_dict(),
-        #'scaler': scaler.state_dict(),
-        'epoch': epoch,
-    }
-    torch.save(obj, filename)
-
-clip_model, preprocess = clip.load('ViT-B/32', 'cuda', jit=True)
-try:
-    #val()
-    #demo()
-    while True:
-        print('Epoch', epoch)
-        train()
-        epoch += 1
-        #if epoch % 5 == 0:
-            #val()
-            #demo()
-        save()
-except KeyboardInterrupt:
-    pass
-
-
+demo()
