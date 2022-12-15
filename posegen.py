@@ -80,24 +80,24 @@ class PoseGen(Dataset):
         box3D = torch.zeros((40,7))
         data = self.data[index]
         count=0
-        # max1 = torch.tensor([[[3.7593],
-        #          [7.5061],
-        #          [2.1705],
-        #          [3.3867],
-        #          [4.4751],
-        #          [2.8320],
-        #          [3.1415]]])
-        # min1 = torch.tensor([[[-3.7312],
-        #          [-7.5617],
-        #          [-0.3567],
-        #          [ 0.0000],
-        #          [ 0.0000],
-        #          [ 0.0000],
-        #          [-3.1416]]])
+        max1 = torch.tensor([[[3.7593],
+                 [7.5061],
+                 [2.1705],
+                 [3.3867],
+                 [4.4751],
+                 [2.8320],
+                 [3.1415]]])
+        min1 = torch.tensor([[[-3.7312],
+                 [-7.5617],
+                 [-0.3567],
+                 [ 0.0000],
+                 [ 0.0000],
+                 [ 0.0000],
+                 [-3.1416]]])
         max2= torch.tensor(7.0983) 
         min2= torch.tensor(-3.0967)
-        max1 = torch.tensor(7.5061) 
-        min1 = torch.tensor(-7.5617)
+        # max1 = torch.tensor(7.5061) 
+        # min1 = torch.tensor(-7.5617)
         gt_meshes = []
         if not self.use_cache:
             for i in data['objects']:
@@ -116,7 +116,7 @@ class PoseGen(Dataset):
                     count+=1
                 except KeyError :
                     continue
-            
+            size = count+1
             if count<40:
                 text_embeddings[count:40] = text_embeddings[count-1]
                 box3D[count:40] = box3D[count-1]
@@ -124,7 +124,7 @@ class PoseGen(Dataset):
                 
             text_embeddings = text_embeddings.permute(1,0)
             box3D = box3D.permute(1,0)
-            box3D = a + ((box3D - min1) * (b - a) / (max1 - min1)) #min-max norm to [-1,1]
+            box3D = a + ((box3D - min1[0]) * (b - a) / (max1[0] - min1[0])) #min-max norm to [-1,1]
             text_embeddings = a + ((text_embeddings - min2) * (b - a) / (max2 - min2))
             # if self.transform:
             #     box3D = self.transform(box3D.cpu().numpy())
@@ -133,6 +133,7 @@ class PoseGen(Dataset):
             new_data['pose']=box3D.squeeze(0)
             new_data['text'] = text_embeddings.squeeze(0)
             new_data['meshes'] = gt_meshes
+            new_data['size'] = size
             self.cached_data.append(new_data)
         # else:
         #     new_data = self.cached_data[index]
