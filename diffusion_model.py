@@ -754,8 +754,14 @@ class Trainer(object):
         self.ds = PoseGen('train',overfit=False)
         dl = DataLoader(self.ds, batch_size = train_batch_size, shuffle = True, pin_memory = True, num_workers = cpu_count())
 
+        self.val_ds = PoseGen('val',overfit=False)
+        self.val_dl = DataLoader(self.ds, batch_size = train_batch_size, shuffle = True, pin_memory = True, num_workers = cpu_count())
+
         dl = self.accelerator.prepare(dl)
         self.dl = cycle(dl)
+
+        # val_dl = self.accelerator.prepare(val_dl)
+        # self.val_dl = cycle(val_dl)
 
         # optimizer
 
@@ -854,6 +860,7 @@ class Trainer(object):
 
                         with torch.no_grad():
                             milestone = self.step // self.save_and_sample_every
+                            self.val()
                             # batches = num_to_groups(self.num_samples, self.batch_size)
                             # all_images_list = list(map(lambda n: self.ema.ema_model.sample(batch_size=n), batches))
 
@@ -864,3 +871,25 @@ class Trainer(object):
                 pbar.update(1)
 
         accelerator.print('training complete')
+
+    def val(self):
+        with torch.no_grad():
+            device ='cuda:0'
+            print(len(self.val_dl))
+            val_loss = 0.
+
+            for idx, (text,pose) in tqdm(enumerate(self.val_dl)):
+                text,pose = text.to(device), pose.to(device)
+                
+                
+                loss = self.model(pose,text)
+                loss = loss 
+                val_loss += loss.item()
+
+
+            # accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
+            print(f'val_loss: {val_loss/len(self.val_dl):.4f}')
+            wandb.log({'val_loss': val_loss})
+
+            
+

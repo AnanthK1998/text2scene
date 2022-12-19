@@ -33,20 +33,20 @@ warnings.filterwarnings('ignore')
 def denormalize(pose):
     a = 0
     b = 1
-    max1 = torch.tensor([[[3.7593],
+    max1 = torch.tensor([[[4.6341],
                  [7.5061],
                  [2.1705],
                  [3.3867],
-                 [4.4751],
+                 [5.2126],
                  [2.8320],
                  [3.1415]]]).to(device)
-    min1 = torch.tensor([[[-3.7312],
-             [-7.5617],
-             [-0.3567],
-             [ 0.0000],
-             [ 0.0000],
-             [ 0.0000],
-             [-3.1416]]]).to(device)
+    min1 = torch.tensor([[[-3.9863],
+                [-7.5617],
+                [-0.3567],
+                [ 0.0000],
+                [ 0.0000],
+                [ 0.0000],
+                [-3.1416]]]).to(device)
     # max1 = torch.tensor(7.5061).to(device)
     # min1 = torch.tensor(-7.5617).to(device)
     pose = min1[0]+ ((pose -a) * (max1[0]-min1[0])/(b-a))

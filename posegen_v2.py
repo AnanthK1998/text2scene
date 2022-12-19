@@ -35,14 +35,14 @@ class PoseGen(Dataset):
         count=0
         # max1 = torch.tensor(7.5061) 
         # min1 = torch.tensor(-7.5617)
-        max1 = torch.tensor([[[3.7593],
+        max1 = torch.tensor([[[4.6341],
                  [7.5061],
                  [2.1705],
                  [3.3867],
-                 [4.4751],
+                 [5.2126],
                  [2.8320],
                  [3.1415]]])
-        min1 = torch.tensor([[[-3.7312],
+        min1 = torch.tensor([[[-3.9863],
                  [-7.5617],
                  [-0.3567],
                  [ 0.0000],
@@ -50,7 +50,7 @@ class PoseGen(Dataset):
                  [ 0.0000],
                  [-3.1416]]])
         max2= torch.tensor(7.0983) 
-        min2= torch.tensor(-3.0967)
+        min2= torch.tensor(-3.4024)
         
         for i in data['objects']:
             try:
@@ -60,7 +60,7 @@ class PoseGen(Dataset):
                 box3D[count] = pose
                 objectness[count] = 1
                 count+=1
-            except KeyError :
+            except (KeyError,RuntimeError) as e : #sometimes text token context length>77, hence runtime error. skip those
                 continue
         if count<40: #PADDING
             objectness[count:40] = -1

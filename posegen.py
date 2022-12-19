@@ -80,14 +80,14 @@ class PoseGen(Dataset):
         box3D = torch.zeros((40,7))
         data = self.data[index]
         count=0
-        max1 = torch.tensor([[[3.7593],
+        max1 = torch.tensor([[[4.6341],
                  [7.5061],
                  [2.1705],
                  [3.3867],
-                 [4.4751],
+                 [5.2126],
                  [2.8320],
                  [3.1415]]])
-        min1 = torch.tensor([[[-3.7312],
+        min1 = torch.tensor([[[-3.9863],
                  [-7.5617],
                  [-0.3567],
                  [ 0.0000],
@@ -95,7 +95,7 @@ class PoseGen(Dataset):
                  [ 0.0000],
                  [-3.1416]]])
         max2= torch.tensor(7.0983) 
-        min2= torch.tensor(-3.0967)
+        min2= torch.tensor(-3.4024)
         # max1 = torch.tensor(7.5061) 
         # min1 = torch.tensor(-7.5617)
         gt_meshes = []
@@ -114,7 +114,7 @@ class PoseGen(Dataset):
                     textures = TexturesVertex(verts_features=verts_rgb)
                     gt_meshes.append(Meshes(verts=[torch.tensor(np.asarray(tmesh.vertices),dtype=torch.float32)],faces=[torch.tensor(np.asarray(tmesh.faces),dtype=torch.float32)],textures=textures))
                     count+=1
-                except KeyError :
+                except (KeyError,RuntimeError) as e : #sometimes text token context length>77, hence runtime error. skip those
                     continue
             size = count+1
             if count<40:
@@ -126,9 +126,7 @@ class PoseGen(Dataset):
             box3D = box3D.permute(1,0)
             box3D = a + ((box3D - min1[0]) * (b - a) / (max1[0] - min1[0])) #min-max norm to [-1,1]
             text_embeddings = a + ((text_embeddings - min2) * (b - a) / (max2 - min2))
-            # if self.transform:
-            #     box3D = self.transform(box3D.cpu().numpy())
-            #     text_embeddings= self.transform(text_embeddings.cpu().numpy())
+
             new_data={}
             new_data['pose']=box3D.squeeze(0)
             new_data['text'] = text_embeddings.squeeze(0)
