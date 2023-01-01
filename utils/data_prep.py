@@ -5,6 +5,7 @@ import pickle
 from easydict import EasyDict
 import os
 from tqdm import tqdm
+import clip
 
 CONF = EasyDict()
 CONF.PATH = EasyDict()
@@ -40,7 +41,7 @@ val_scene_list = sorted([line.rstrip() for line in open(CONF.PATH.DATA+'/ScanRef
 
 scene_dir = glob(CONF.PATH.DATA+ "/scannet/processed_data/*")
 
-
+clip_model,_ = clip.load('ViT-B/32', 'cpu', jit=True)
 
 data = []
 for i in tqdm(train_scene_list):
@@ -216,40 +217,76 @@ for idx in l:
 with open(CONF.PATH.DATA + '/scenegen_train.pkl', 'wb') as fp:
     pickle.dump(data, fp)
 
-#Validation
-# data = []
-# for i in tqdm(val_scene_list):
-#     try:
-#         rfd_data = rfd_data = pickle.load( open( CONF.PATH.DATA+ "/scannet/processed_data/"+ i+ "/bbox.pkl","rb"))
-#     except:
-#         continue
-#     instance_ids=[]
-#     for obj in rfd_data:
-#         instance_ids.append(int(obj['instance_id']))
-#     scene_dict = {}
-#     scene_dict['scene_id'] = i
-#     scene_dict['objects'] = []
-    
-#     for object in instance_ids:
-#         object_dict = {}
-#         object_dict['object_id'] = object
-#         object_dict['object_data'] = {}
-#         with open("/home/kaly/research/RfDNet/datasets/ScanRefer_filtered_val.json") as json_file:
-#             text_data = json.load(json_file)
-#         for text_dict in text_data:
-#             if text_dict['scene_id']==i and text_dict['object_id'] == str(object) and text_dict['ann_id']=='0':
-#                 object_dict['object_data']['text'] = text_dict['description']
-#         for pose_dict in rfd_data:
-#             if pose_dict['instance_id'] == object:
-#                 object_dict['object_data']['box3D'] = pose_dict['box3D']
-#                 object_dict['object_data']['shapenet_catid'] = pose_dict['shapenet_catid']
-#                 object_dict['object_data']['shapenet_id'] = pose_dict['shapenet_id']
+shape_data=[]
+for scene in tqdm(data):
+    for i in scene['objects']:
         
-#         scene_dict['objects'].append(object_dict)
+        shape_dict={}
+        try:
+            embed = clip_model.encode_text(clip.tokenize(i['object_data']['text']))
+            shape_dict['text']=i['object_data']['text']
+            shape_dict['shapenet_catid']=i['object_data']['shapenet_catid']
+            shape_dict['shapenet_id']=i['object_data']['shapenet_id']
+            
+            shape_data.append(shape_dict)
+        except:
+            continue
+with open(CONF.PATH.DATA + '/shapegen_train.pkl', 'wb') as fp:
+    pickle.dump(shape_data, fp)
+
+#Validation
+data = []
+for i in tqdm(val_scene_list):
+    try:
+        rfd_data = rfd_data = pickle.load( open( CONF.PATH.DATA+ "/scannet/processed_data/"+ i+ "/bbox.pkl","rb"))
+    except:
+        continue
+    instance_ids=[]
+    for obj in rfd_data:
+        instance_ids.append(int(obj['instance_id']))
+    scene_dict = {}
+    scene_dict['scene_id'] = i
+    scene_dict['objects'] = []
     
-#     data.append(scene_dict)
+    for object in instance_ids:
+        object_dict = {}
+        object_dict['object_id'] = object
+        object_dict['object_data'] = {}
+        with open("/home/kaly/research/RfDNet/datasets/ScanRefer_filtered_val.json") as json_file:
+            text_data = json.load(json_file)
+        for text_dict in text_data:
+            if text_dict['scene_id']==i and text_dict['object_id'] == str(object) and text_dict['ann_id']=='0':
+                object_dict['object_data']['text'] = text_dict['description']
+        for pose_dict in rfd_data:
+            if pose_dict['instance_id'] == object:
+                object_dict['object_data']['box3D'] = pose_dict['box3D']
+                object_dict['object_data']['shapenet_catid'] = pose_dict['shapenet_catid']
+                object_dict['object_data']['shapenet_id'] = pose_dict['shapenet_id']
+        
+        scene_dict['objects'].append(object_dict)
     
-# #ToDo: Add script to remove null scenes from validation
+    data.append(scene_dict)
     
-# with open(CONF.PATH.DATA + '/scenegen_val.pkl', 'wb') as f:
-#     pickle.dump(data, f)
+#ToDo: Add script to remove null scenes from validation
+    
+with open(CONF.PATH.DATA + '/scenegen_val.pkl', 'wb') as f:
+    pickle.dump(data, f)
+
+
+val_shape_data=[]
+for scene in tqdm(data):
+    for i in scene['objects']:
+        
+        shape_dict={}
+        try:
+            embed = clip_model.encode_text(clip.tokenize(i['object_data']['text']))
+            shape_dict['text']=i['object_data']['text']
+            shape_dict['shapenet_catid']=i['object_data']['shapenet_catid']
+            shape_dict['shapenet_id']=i['object_data']['shapenet_id']
+            
+            val_shape_data.append(shape_dict)
+        except:
+            continue
+
+with open(CONF.PATH.DATA + '/shapegen_val.pkl', 'wb') as fp:
+    pickle.dump(val_shape_data, fp)
