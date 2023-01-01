@@ -15,6 +15,9 @@ diffusion = GaussianDiffusion1D(
     objective = 'pred_v'
 ).cuda()
 
+
+
+
 trainer = Trainer(
     diffusion,
     train_batch_size = 16,
@@ -25,4 +28,9 @@ trainer = Trainer(
     amp = False                       # turn on mixed precision
 )
 
+
+pretrained = True
+if pretrained:
+    trainer.load(76)
+    
 trainer.train()

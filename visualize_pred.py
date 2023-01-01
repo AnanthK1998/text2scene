@@ -32,34 +32,34 @@ trainer = Trainer(
     amp = False                       # turn on mixed precision
 )
 
-mode = 'train'
+mode = 'val'
 
 
-milestone =43 #36 best
+milestone = 221#135#128-best#125#115#105 
 path = '/home/kaly/research/text2scene/results/'+str(milestone)
 if not os.path.exists(path):
     os.mkdir(path)
 trainer.load(milestone) #21
 data = pgen2(mode)
-dl = torch.utils.data.DataLoader(data,batch_size=10,shuffle=False)
+dl = torch.utils.data.DataLoader(data,batch_size=40,shuffle=False)
 for i, (cond,gt) in tqdm(enumerate(dl)):
     #cond = data[idx][0].unsqueeze(0).to(device)
     cond = cond.to(device)
     gt = gt.to(device)
+    sampled_seq = diffusion.sample(cond,batch_size = 40)
     
-    sampled_seq = diffusion.sample(cond,batch_size = 10)
     break
 #[:,:,:size-1]
 counter =0
-for idx in tqdm(range(0,40,5)):
+for idx in tqdm(range(0,40)):
     size = pgen1(mode)[idx]['size']
     #sampled_seq = denormalize(sampled_seq)
     # gt = data[idx][1].unsqueeze(0).to(device)
     meshes = [pgen1(mode)[idx]['meshes'][:size-1]]
-    pred = sampled_seq[counter].unsqueeze(0).to(device)[:,:,:size-1]
+    pred = sampled_seq[idx].unsqueeze(0).to(device)[:,:,:size-1]
     
-    ground = gt[counter].unsqueeze(0).to(device)[:,:,:size-1]
-    counter+=1
+    ground = gt[idx].unsqueeze(0).to(device)[:,:,:size-1]
+    
     # print(sampled_seq.shape)
     # print(gt.shape)
     pred_scene_list = get_scene_list(pred,meshes)
@@ -68,12 +68,12 @@ for idx in tqdm(range(0,40,5)):
     count = 0 
     for j in pred_scene_list:
             
-            #images[count] = torch.tensor(render_top_view(j))
-            verts= j.verts_packed().cpu().numpy()
-            faces = j.faces_packed().cpu().numpy()
-            temp = trimesh.Trimesh(vertices =verts,faces=faces)
-            temp.export(path+ '/pred_{}_{}-{}_new.obj'.format(mode,idx,milestone))
-            count+=1
+        #images[count] = torch.tensor(render_top_view(j))
+        verts= j.verts_packed().cpu().numpy()
+        faces = j.faces_packed().cpu().numpy()
+        temp = trimesh.Trimesh(vertices =verts,faces=faces)
+        temp.export(path+ '/pred_{}_{}-{}_new.obj'.format(mode,idx,milestone))
+        count+=1
 
         
         
@@ -83,6 +83,6 @@ for idx in tqdm(range(0,40,5)):
         verts= j.verts_packed().cpu().numpy()
         faces = j.faces_packed().cpu().numpy()
         temp = trimesh.Trimesh(vertices =verts,faces=faces)
-        temp.export('/home/kaly/research/text2scene/results/gt_{}_{}.obj'.format(mode,idx))
+        temp.export('/home/kaly/research/text2scene/results/gt/gt_{}_{}.obj'.format(mode,idx))
         #images[count] = torch.tensor(render_top_view(j))
         count+=1

@@ -70,7 +70,7 @@ class PoseGen(Dataset):
         text_embeddings = text_embeddings.permute(1,0)
         box3D = box3D.permute(1,0)
         objectness = objectness.permute(1,0)
-        box3D = a + ((box3D - min1[0]) * (b - a) / (max1[0] - min1[0])) #min-max norm to [-1,1]
+        box3D = a + ((box3D - min1[0]) * (b - a) / (max1[0]- min1[0])) #min-max norm to [-1,1]
         text_embeddings = a2 + ((text_embeddings - min2) * (b2 - a2) / (max2 - min2))
         # rotation =box3D[:3,:]
         # translation = box3D[3:6,:]
