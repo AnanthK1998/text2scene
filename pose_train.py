@@ -4,7 +4,7 @@ device = 'cuda:0'
 model = Unet1D(
     dim = 64,
     dim_mults = (1, 2, 4, 8),
-    channels = 7,
+    channels = 8,
     self_condition=True
 ).cuda()
 
@@ -29,7 +29,7 @@ trainer = Trainer(
 )
 
 
-pretrained = True
+pretrained = False
 if pretrained:
     trainer.load(76)
     

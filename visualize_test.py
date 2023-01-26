@@ -49,7 +49,7 @@ def denormalize(pose):
              [-3.1416]]]).to(device)
     # max1 = torch.tensor(7.5061).to(device)
     # min1 = torch.tensor(-7.5617).to(device)
-    pose = min1[0]+ ((pose -a) * (max1[0]-min1[0])/(b-a))
+    pose[:7,:] = min1[0]+ ((pose[:7,:] -a) * (max1[0]-min1[0])/(b-a))
     return pose
 
 def render_top_view(scene_mesh,show=False):

@@ -13,7 +13,7 @@ class ShapeGen(Dataset):
         if self.split == 'train':
             self.data = pickle.load( open( "/home/kaly/research/RfDNet/datasets/shapegen_train.pkl","rb"))
         elif self.split=='val':
-            self.data =pickle.load( open( "/home/kaly/research/RfDNet/datasets/shapgen_val.pkl","rb"))
+            self.data =pickle.load( open( "/home/kaly/research/RfDNet/datasets/shapegen_val.pkl","rb"))
         if self.overfit:
             self.data = self.data[0:32]
         self.clip_model,_ = clip.load('ViT-B/32', 'cpu', jit=True)
@@ -38,18 +38,18 @@ class ShapeGen(Dataset):
         text_embeddings = self.clip_model.encode_text(clip.tokenize(data['text'])).detach()
 
         
-        shapenet_model = os.path.join(ShapeNetv2_path, data['shapenet_catid'], data['shapenet_id'],'models/model_normalized.solid.binvox')
+        shapenet_model = os.path.join('/home/kaly/research/RfDNet',ShapeNetv2_path, data['shapenet_catid'], data['shapenet_id'],'models/model_normalized.solid.binvox')
         
         with open(shapenet_model, 'rb') as f:
-            voxels = torch.tensor(read_as_3d_array(f).data,dtype=torch.uint8)
+            voxels = torch.tensor(read_as_3d_array(f).data,dtype=torch.float32)
             
         
         
         
-        text_embeddings = text_embeddings.permute(1,0)
+        #text_embeddings = text_embeddings.permute(1,0)
         text_embeddings = a + ((text_embeddings - min2) * (b - a) / (max2 - min2))
         
-        return text_embeddings, voxels
+        return voxels, text_embeddings
     
     def __len__(self):
         return len(self.data)

@@ -117,10 +117,6 @@ class PoseGen(Dataset):
                 except (KeyError,RuntimeError) as e : #sometimes text token context length>77, hence runtime error. skip those
                     continue
             size = count+1
-            if count<40:
-                text_embeddings[count:40] = text_embeddings[count-1]
-                box3D[count:40] = box3D[count-1]
-                gt_meshes.extend([gt_meshes[-1]]*(40-count))
                 
             text_embeddings = text_embeddings.permute(1,0)
             box3D = box3D.permute(1,0)

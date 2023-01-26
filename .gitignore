@@ -7,3 +7,5 @@ rotation_weights/
 translation_weights/
 sandbox.py
 diffusion_model_v1/
+testing/
+shape_weights/

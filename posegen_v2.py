@@ -29,7 +29,7 @@ class PoseGen(Dataset):
         a2=-1
         b2=1
         text_embeddings = torch.zeros((40,512))
-        box3D = torch.zeros((40,7))
+        box3D = torch.zeros((40,8))
         objectness = torch.zeros((40,1))
         data = self.data[index]
         count=0
@@ -57,26 +57,35 @@ class PoseGen(Dataset):
                 text_embed = self.clip_model.encode_text(clip.tokenize(i['object_data']['text']))
                 pose = torch.tensor(i['object_data']['box3D'])
                 text_embeddings[count] = text_embed.detach()
-                box3D[count] = pose
+                box3D[count,:7] = pose
+                box3D[count,7] = 1
                 objectness[count] = 1
                 count+=1
             except (KeyError,RuntimeError) as e : #sometimes text token context length>77, hence runtime error. skip those
                 continue
+        #calculate relative coordinates
+        translation = box3D[:,0:3]
+        first = torch.ones((40,3))*translation[:1,:]
+        box3D[:,0:3] = translation-first
+        
         if count<40: #PADDING
-            objectness[count:40] = -1
-            text_embeddings[count:40] = text_embeddings[count-1]
-            box3D[count:40] = box3D[count-1]
+            objectness[count:40] = 0
+            text_embeddings[count:40] = torch.zeros((512))
+            box3D[count:40,:7] = torch.zeros((7))
+            box3D[count:40,7] = 0 #objectness zero for padded objects
             
         text_embeddings = text_embeddings.permute(1,0)
         box3D = box3D.permute(1,0)
         objectness = objectness.permute(1,0)
-        box3D = a + ((box3D - min1[0]) * (b - a) / (max1[0]- min1[0])) #min-max norm to [-1,1]
-        text_embeddings = a2 + ((text_embeddings - min2) * (b2 - a2) / (max2 - min2))
+        size = objectness.sum()
+        box3D[:7,:] = a + ((box3D[:7,:] - min1[0]) * (b - a) / (max1[0]- min1[0])) #min-max norm to [0,1]
+        text_embeddings = a2 + ((text_embeddings - min2) * (b2 - a2) / (max2 - min2)) #min-max norm to [-1,1]
+        #text_embeddings = torch.mean(text_embeddings[:,:size],dim=1).unsqueeze(1).repeat(1,40)
         # rotation =box3D[:3,:]
         # translation = box3D[3:6,:]
         # orientation = box3D[6,:]
         #del box3D
-        return text_embeddings,box3D#rotation,translation,orientation,objectness
+        return text_embeddings,box3D
     
     def __len__(self):
         return len(self.data)
