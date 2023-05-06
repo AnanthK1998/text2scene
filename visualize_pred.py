@@ -9,6 +9,8 @@ import numpy as np
 import os
 
 import clip 
+np.random.seed(0)
+
 
 clip_model,_ = clip.load('ViT-B/32', 'cpu', jit=True)
 device = 'cuda:0'
@@ -36,9 +38,9 @@ trainer = Trainer(
     amp = False                       # turn on mixed precision
 )
 
-mode = 'train'
+mode = 'val'
 
-s = 22
+
 
 text= ['the chair is at the right end of the table. it is to the right of another chair. it is the last chair on this side of the table.',
 'this is a brown chair. it is turned toward the front of the table.',
@@ -56,38 +58,46 @@ text= ['the chair is at the right end of the table. it is to the right of anothe
 
 # cond = torch.zeros((1,512,40))
 # for i in text: 
-permute = True
-milestone = 45#221#135#128-best#125#115#105 
+permute = False
+milestone = 41 #221#135#128-best#125#115#105 
 path = '/home/kaly/research/text2scene/results/'+str(milestone)
 if not os.path.exists(path):
     os.mkdir(path)
 trainer.load(milestone) #21
 data = pgen2(mode)
 
-dl = torch.utils.data.DataLoader(data,batch_size=1,shuffle=False)
-for i, (cond,gt) in tqdm(enumerate(dl)):
+dl = torch.utils.data.DataLoader(data,batch_size=30,shuffle=False)
+for i, (cond,gt,size) in tqdm(enumerate(dl)):
     #cond = data[idx][0].unsqueeze(0).to(device)
     cond = cond.to(device)
-    p = np.random.permutation(s) #22
-    p_list = p.tolist()
+    
+    size= size.cpu().numpy()
+    print(size)
     if permute:
-        cond[:,:,:s]= cond[:,:,p]
+        for j in range(30):
+            p = np.random.permutation(size[j]) #22
+            p_list = p.tolist()
+            cond[j:j+1,:,:size[j]]= cond[j:j+1,:,p]
     # temp = cond[:,:,0]
     # cond[:,:,0]= cond[:,:,-1]
     # cond[:,:,-1]= temp
     #cond = torch.zeros((1,512,40)).to(device)
     gt = gt.to(device)
-    sampled_seq = diffusion.sample(cond,batch_size = 1)
+    sampled_seq = diffusion.sample(cond,batch_size = 30)
     
     break
 print(sampled_seq.shape)
 #[:,:,:size-1]
 counter =0
-for idx in tqdm(range(0,1)):
-    size = pgen1(mode)[idx]['size']
+for idx in tqdm(range(30)):
+    size = pgen2(mode)[idx][2]
+    print(size)
     #sampled_seq = denormalize(sampled_seq)
     #gt = data[idx][1].unsqueeze(0).to(device)
     objs = pgen1(mode)[idx]['meshes']
+    p = np.random.permutation(size)
+    
+    p_list = p.tolist()
     if permute:
         objs = [objs[i] for i in p_list]
     meshes = [objs]

@@ -4,8 +4,10 @@ device = 'cuda:0'
 model = Unet1D(
     dim = 64,
     dim_mults = (1, 2, 4, 8),
-    channels = 8,
-    self_condition=True
+    channels = 9,
+    self_condition=True,
+    use_dgcnn=False,
+    use_stn=True
 ).cuda()
 
 diffusion = GaussianDiffusion1D(
@@ -25,7 +27,9 @@ trainer = Trainer(
     train_num_steps = 700000,         # total training steps
     gradient_accumulate_every = 2,    # gradient accumulation steps
     ema_decay = 0.995,                # exponential moving average decay
-    amp = False                       # turn on mixed precision
+    amp = False,                       # turn on mixed precision
+    use_wandb=True,
+    results_folder='./pose_weights_stn/'
 )
 
 

@@ -1,147 +1,169 @@
-import torch
-import numpy as np
-import pytorch3d
-# datastructures
-from pytorch3d.structures import Meshes
-
-# 3D transformations functions
-from pytorch3d.transforms import Rotate, Translate
-
-# rendering components
-from pytorch3d.renderer import (
-    FoVPerspectiveCameras, look_at_view_transform, look_at_rotation, 
-    RasterizationSettings, MeshRenderer, MeshRasterizer, BlendParams,
-    SoftSilhouetteShader, HardPhongShader, PointLights, TexturesVertex,
-)
+from diffusion_model import Unet1D,GaussianDiffusion1D, Trainer
+from posegen_v2 import PoseGen as pgen2
+from posegen import PoseGen as pgen1
+from visualize_test import denormalize,get_scene_list,render_top_view
 import trimesh
-from utils.shapenet import ShapeNetv2_Watertight_Scaled_Simplified_path
-from utils.pc_util import rotz
+import torch
+from tqdm import tqdm
+import numpy as np
+import os
+from torchmetrics.image.fid import FrechetInceptionDistance
+from torchmetrics.image.kid import KernelInceptionDistance
 from matplotlib import pyplot as plt
-from pytorch3d.structures import join_meshes_as_scene
+from bbox_utils import get_object_info_from_bounding_box, get_3d_box, box3d_iou, separate_boxes,detect_collisions
+from torchmetrics.functional import kl_divergence
+fid = FrechetInceptionDistance(feature=64,normalize = True)
+kid = KernelInceptionDistance(subset_size=50, normalize=True)
 
-import cv2
-
-device = "cuda:0"
-
-def denormalize(pose):
-    a = -1
-    b = 1
-    max1 = torch.tensor([[[3.7593],
-                 [7.5061],
-                 [2.1705],
-                 [3.3867],
-                 [4.4751],
-                 [2.8320],
-                 [3.1415]]])
-    min1 = torch.tensor([[[-3.7312],
-             [-7.5617],
-             [-0.3567],
-             [ 0.0000],
-             [ 0.0000],
-             [ 0.0000],
-             [-3.1416]]])
-    pose = min1[0]+ ((pose -a) * (max1[0]-min1[0])/(b-a))
-    return pose
+import clip
 
 
+device = 'cuda:0'
+clip_model,_ = clip.load('ViT-B/32', 'cpu', jit=True)
 
-def get_scene_list(poses, objects):
-     
-    poses = denormalize(poses)
-    poses = poses.permute(1,0)
-    FLAP_YZ = False
-    FLAP_XZ = False
-    AUGMENT_ROT = False
+model = Unet1D(
+    dim = 64,
+    dim_mults = (1, 2, 4, 8),
+    channels = 9,
+    self_condition=True,
+    use_dgcnn=False,
+    use_stn=False
+).cuda()
+
+diffusion = GaussianDiffusion1D(
+    model,
+    seq_length = 40,
+    timesteps = 1000,
+    objective = 'pred_v'
+).cuda()
+
+trainer = Trainer(
+    diffusion,
+    train_batch_size = 16,
+    train_lr = 1e-4,
+    train_num_steps = 700000,         # total training steps
+    gradient_accumulate_every = 2,    # gradient accumulation steps
+    ema_decay = 0.995,                # exponential moving average decay
+    amp = False,                       # turn on mixed precision
+    results_folder = './pose_weights_baseline'
+)
+
+mode = 'val'
+
+torch.manual_seed(42)
+
+
+
+batchsize=65#65#130
+
+milestone = 91#58-best#56#28
+#221#135#128-best#125#115#105 
+path = '/home/kaly/research/text2scene/results/'+str(milestone)
+if not os.path.exists(path):
+    os.mkdir(path)
+trainer.load(milestone) #21
+data = pgen2(mode,inference=True)
+
+dl = torch.utils.data.DataLoader(data,batch_size=batchsize,shuffle=False)
+for i, (cond,gt,size) in tqdm(enumerate(dl)):
+    cond = cond.to(device)
+    gt = gt.to(device)
+    sampled_seq = diffusion.sample(cond,batch_size = batchsize)
+    
+    break
+#print(sampled_seq.shape)
+#[:,:,:size-1]
+counter =0
+pred_images = torch.zeros((batchsize,224,224,3),dtype=torch.uint8)
+gt_images = torch.zeros((batchsize,224,224,3),dtype=torch.uint8)
+
+# for idx in tqdm(range(batchsize)):
+#     data = pgen1(mode)[idx]
+#     size =data['size']
+#     objs = data['meshes']
+#     meshes = [objs]
+#     bboxes = np.zeros((size,8,3))
+#     pred = sampled_seq[idx].unsqueeze(0).to(device)[:,:,:size]
+#     # for i in range(size):
+#     #     bboxes[i] = get_3d_box(pred[0,3:6,i].cpu().numpy().tolist(),pred[0,6,i].cpu().numpy().tolist(),pred[0,0:3,i].cpu().numpy().tolist())
+#     # collisions = detect_collisions(bboxes)
+#     # for pair in collisions:
+#     #     bboxes[pair[0]],bboxes[pair[1]]= separate_boxes(bboxes[pair[0]],bboxes[pair[1]],iou_threshold=0.17)
+    
+#     # for i in range(size):
+#     #     center,scale = get_object_info_from_bounding_box(bboxes[i])
+#     #     center,scale = torch.tensor(center).to('cuda:0'),torch.tensor(scale).to('cuda:0')
+#     #     #pred[0,3:6,i] = scale
+#     #     pred[0,0:3,i] = center
+    
     
 
-    if AUGMENT_ROT:
-        rot_angle = (np.random.random() * np.pi / 2) - np.pi / 4
-    else:
-        rot_angle = 0.
-    rot_mat = rotz(rot_angle)
-    rot_angle = torch.tensor(rot_angle)
+
     
     
 
-    transform_m = torch.tensor([[0, 0, -1], [-1, 0, 0], [0, 1, 0]])
-    scene=[]
-    count=0
-    scene_list=[]
-    for mesh in objects:
-
-        if FLAP_YZ:
-            poses[count][0] = -1 * poses[count][0]
-            poses[count][6] = torch.sign(poses[count][6]) * torch.pi - poses[count][6]
-        if FLAP_XZ:
-            poses[count][1] = -1 * poses[count][1]
-            poses[count][6] = -1 * poses[count][6]
-
-        poses[count][0:3] = torch.tensor(np.dot(poses[count][0:3].numpy(), np.transpose(rot_mat)))
-        poses[count][6] += rot_angle
-
-        '''Normalize angles to [-np.pi, np.pi]'''
-        poses[count][6] = torch.tensor(np.mod(poses[count][6].numpy() + np.pi, 2 * np.pi) - np.pi)
+#     ground = gt[idx].unsqueeze(0).to(device)[:,:,:size]
+    
+#     pred_scene_list = get_scene_list(pred[:,:8,:],meshes)
+#     gt_scene_list = get_scene_list(ground[:,:8,:],meshes)
+    
+#     count = 0 
+#     for j in pred_scene_list:
+        
+#         pred_images[count] = torch.tensor(render_top_view(j.to('cuda:0'))[:,:,:,:3]*255,dtype=torch.uint8)
+#         plt.imsave('/home/kaly/research/text2scene/test-render-pred.jpg',pred_images[count].cpu().numpy())
+#         #print(torch.amax(pred_images[count]),torch.amin(pred_images[count]))
+#         verts= j.verts_packed().cpu().numpy()
+#         faces = j.faces_packed().cpu().numpy()
+#         temp = trimesh.Trimesh(vertices =verts,faces=faces)
+#         temp.export(path+ '/pred_{}_{}-{}.obj'.format(mode,idx,milestone))
+#         count+=1
 
         
         
-        temp = mesh
-        obj_points = mesh.verts_packed().cpu().numpy()
-        mesh_points = obj_points
+#     count=0
+#     for j in gt_scene_list:
         
-        #front_view_image = render_front_view(mesh_torch,show=True)
+#         verts= j.verts_packed().cpu().numpy()
+#         faces = j.faces_packed().cpu().numpy()
+#         temp = trimesh.Trimesh(vertices =verts,faces=faces)
+#         temp.export('/home/kaly/research/text2scene/testing/gt/gt_{}_{}.obj'.format(mode,idx))
+#         gt_images[count] = torch.tensor(render_top_view(j)[:,:,:,:3]*255,dtype=torch.uint8)
+#         plt.imsave('/home/kaly/research/text2scene/test-render-gt.jpg',gt_images[count].cpu().numpy())
+#         count+=1
 
 
-        '''Fit obj points to bbox'''
-        obj_points = obj_points - (obj_points.max(0) + obj_points.min(0))/2.
-        obj_points = obj_points.dot(transform_m.T)
-        obj_points = obj_points.dot(np.diag(1/(obj_points.max(0) - obj_points.min(0)))).dot(np.diag(poses[count][3:6].numpy()))
-        orientation = poses[count][6].numpy()
-        axis_rectified = np.array([[np.cos(orientation), np.sin(orientation), 0], [-np.sin(orientation), np.cos(orientation), 0], [0, 0, 1]])
-        obj_points = obj_points.dot(axis_rectified) + poses[count][0:3].numpy()
-        
-        verts_rgb = torch.ones_like(torch.tensor(obj_points),dtype= torch.float32)[None]  # (1, V, 3)
-        textures = TexturesVertex(verts_features=verts_rgb.to(device))
-        temp= Meshes(verts=[torch.tensor(obj_points,dtype=torch.float32).to(device)],faces=[mesh.faces_packed().to(device)],textures=textures)
-        scene_list.append(temp)
+# pred_images = pred_images.permute(0,3,1,2)
+# gt_images = gt_images.permute(0,3,1,2)
 
-        
+# clip_image_feats = clip_model.encode_image(pred_images).unsqueeze(1).repeat(1,40,1).to('cuda:0')
+# data = pgen2(mode,inference=True,normalize_text=False)
+# dl = torch.utils.data.DataLoader(data,batch_size=batchsize,shuffle=False)
+# for i, (cond,_,size) in enumerate(dl):
+#     cond = cond.permute(0,2,1).cpu().detach().numpy()
+#     size = size.cpu().detach().numpy()
+#     break
 
-        count+=1
-    return scene_list
+# text_embeddings = cond / np.linalg.norm(cond, axis=2, keepdims=True)
+# clip_image_feats = clip_image_feats.cpu().detach().numpy() / np.linalg.norm(clip_image_feats.cpu().detach().numpy(), axis=1, keepdims=True)
+# clip_score = 0.0
+# for i in range(batchsize):
+#     similarity_matrix = np.dot(text_embeddings[i][:size[i],:], clip_image_feats[i][:size[i],:].T)
+#     clip_score += np.trace(similarity_matrix) / similarity_matrix.shape[0]
 
-def render_top_view(scene,show=False):
-    cameras = FoVPerspectiveCameras(device=device)
-    scene_mesh = join_meshes_as_scene(scene)
-    raster_settings = RasterizationSettings(
-        image_size=256, 
-        blur_radius=0.0, 
-        faces_per_pixel=1, 
-    )
-   
-    # We can add a point light in front of the object. 
-    lights = PointLights(device=device, location=((0.0, 0.0, 3.0),))
-    phong_renderer = MeshRenderer(
-        rasterizer=MeshRasterizer(
-            cameras=cameras, 
-            raster_settings=raster_settings
-        ),
-        shader=HardPhongShader(device=device, cameras=cameras, lights=lights)
-    )
-    distance = 8   # distance from camera to the object
-    elevation = 0.0   # angle of elevation in degrees
-    azimuth = 0.0  # No rotation so the camera is positioned on the +Z axis. 
+# clip_score = clip_score / batchsize
 
-    # Get the position of the camera based on the spherical angles
-    R, T = look_at_view_transform(distance, elevation, azimuth, device=device)
+# fid.update(gt_images, real=True)
+# fid.update(pred_images, real=False)
+# fid_score = fid.compute()
 
-   
+# kid.update(gt_images, real=True)
+# kid.update(pred_images, real=False)
+# kid_score = kid.compute()
 
-    image_ref = phong_renderer(meshes_world=scene_mesh, R=R, T=T)
+# #kl_score = kl_divergence()
 
-    if show:
-        image_ref1 = image_ref.cpu().numpy()
-        plt.figure(figsize=(20,20))
-        plt.subplot(1, 2, 1)
-        plt.imshow(image_ref1.squeeze())
-        plt.grid(False)
-    return image_ref
+# print('FID Score: ',fid_score)
+# print('KID Score: ',kid_score)
+
+# print('CLIP-Score: ', clip_score)

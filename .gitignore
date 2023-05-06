@@ -9,3 +9,16 @@ sandbox.py
 diffusion_model_v1/
 testing/
 shape_weights/
+pose_weights_stn/
+pose_weights_baseline/
+pose_weights_baseline-permuted/
+pose_dgcnn_weights_eqvar
+graph_sandbox.py
+shapegen.py
+shape_train.py
+diffusion/
+scannet_planes/
+pose_weights_graph/
+datasets/
+sandbox.ipynb 
+

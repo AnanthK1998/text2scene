@@ -9,10 +9,13 @@ from torch.autograd import Variable
 import torch
 from torch import nn, einsum
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
-
+from torch.utils.data import Dataset
+from torch_geometric.data import Data,Batch
+from torch_geometric.loader import DataLoader
 from torch.optim import Adam
 from torchvision import transforms as T, utils
+from torch_geometric.nn.conv import GraphConv
+from torch_geometric.nn import Linear
 
 from einops import rearrange, reduce
 from einops.layers.torch import Rearrange
@@ -20,11 +23,13 @@ import numpy as np
 from PIL import Image
 from tqdm.auto import tqdm
 from ema_pytorch import EMA
+from sklearn.neighbors import kneighbors_graph
+
 
 from accelerate import Accelerator
 import wandb
 
-from posegen_v2 import PoseGen
+from pose_graph import MyData
 
 ## Permutation Equivariance network
 # constants
@@ -86,27 +91,34 @@ class Residual(nn.Module):
 def Upsample(dim, dim_out = None):
     return nn.Sequential(
         nn.Upsample(scale_factor = 2, mode = 'nearest'),
-        nn.Conv1d(dim, default(dim_out, dim), 3, padding = 1)
+        GraphConv(dim, default(dim_out, dim))
     )
 
 def Downsample(dim, dim_out = None):
-    return nn.Conv1d(dim, default(dim_out, dim), 4, 2, 1)
+    return GraphConv(dim, default(dim_out, dim))
 
-class WeightStandardizedConv2d(nn.Conv1d):
-    """
-    https://arxiv.org/abs/1903.10520
-    weight standardization purportedly works synergistically with group normalization
-    """
-    def forward(self, x):
-        eps = 1e-5 if x.dtype == torch.float32 else 1e-3
 
-        weight = self.weight
-        mean = reduce(weight, 'o ... -> o 1 1', 'mean')
-        var = reduce(weight, 'o ... -> o 1 1', partial(torch.var, unbiased = False))
-        normalized_weight = (weight - mean) * (var + eps).rsqrt()
 
-        return F.conv1d(x, normalized_weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+# class GraphConv(GraphConv):
+#     """
+#     https://arxiv.org/abs/1903.10520
+#     weight standardization purportedly works synergistically with group normalization
+#     """
+#     def forward(self, x):
+#         eps = 1e-5 if x.dtype == torch.float32 else 1e-3
 
+#         weight = self.edge_weights
+#         mean = reduce(weight, 'o ... -> o 1 1', 'mean')
+#         var = reduce(weight, 'o ... -> o 1 1', partial(torch.var, unbiased = False))
+#         normalized_weight = (weight - mean) * (var + eps).rsqrt()
+
+#         return F.conv1d(x, normalized_weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+class MyData(Data): #BXCXN
+    def __cat_dim__(self, key, value, *args, **kwargs):
+        if key == 'y' or key =='pose':
+            return None
+        else:
+            return super().__cat_dim__(key, value, *args, **kwargs)
 class LayerNorm(nn.Module):
     def __init__(self, dim):
         super().__init__()
@@ -164,12 +176,9 @@ class RandomOrLearnedSinusoidalPosEmb(nn.Module):
 # building block modules
 
 class Block(nn.Module):
-    def __init__(self, dim, dim_out, groups = 8,use_dgcnn=False):
+    def __init__(self, dim, dim_out, groups = 8):
         super().__init__()
-        if not use_dgcnn:
-            self.proj = WeightStandardizedConv2d(dim, dim_out, 1, padding = 0)
-        else:
-            self.proj = DyanmicEdgeConv(dim,dim_out)
+        self.proj = GraphConv(dim, dim_out)
         self.norm = nn.GroupNorm(groups, dim_out)
         self.act = nn.SiLU()
 
@@ -185,21 +194,18 @@ class Block(nn.Module):
         return x
 
 class ResnetBlock(nn.Module):
-    def __init__(self, dim, dim_out, *, time_emb_dim = None, groups = 8,use_dgcnn=False):
+    def __init__(self, dim, dim_out, *, time_emb_dim = None, groups = 8):
         super().__init__()
         self.mlp = nn.Sequential(
             nn.SiLU(),
-            nn.Linear(time_emb_dim, dim_out * 2)
+            Linear(time_emb_dim, dim_out * 2)
         ) if exists(time_emb_dim) else None
 
-        self.block1 = Block(dim, dim_out, groups = groups,use_dgcnn=use_dgcnn)
-        self.block2 = Block(dim_out, dim_out, groups = groups,use_dgcnn=use_dgcnn)
-        if not use_dgcnn:
-            self.res_conv = nn.Conv1d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
-        else:
-            self.res_conv = DyanmicEdgeConv(dim,dim_out)
+        self.block1 = Block(dim, dim_out, groups = groups)
+        self.block2 = Block(dim_out, dim_out, groups = groups)
+        self.res_conv = GraphConv(dim, dim_out) if dim != dim_out else nn.Identity()
 
-    def forward(self, x, time_emb = None):
+    def forward(self, x,edge_index, time_emb = None):
 
         scale_shift = None
         if exists(self.mlp) and exists(time_emb):
@@ -207,11 +213,11 @@ class ResnetBlock(nn.Module):
             time_emb = rearrange(time_emb, 'b c -> b c 1')
             scale_shift = time_emb.chunk(2, dim = 1)
 
-        h = self.block1(x, scale_shift = scale_shift)
+        h = self.block1(x,edge_index, scale_shift = scale_shift)
 
-        h = self.block2(h)
+        h = self.block2(h,edge_index)
 
-        return h + self.res_conv(x)
+        return h + self.res_conv(x,edge_index)
 
 class LinearAttention(nn.Module):
     def __init__(self, dim, heads = 4, dim_head = 32):
@@ -219,10 +225,10 @@ class LinearAttention(nn.Module):
         self.scale = dim_head ** -0.5
         self.heads = heads
         hidden_dim = dim_head * heads
-        self.to_qkv = nn.Conv1d(dim, hidden_dim * 3, 1, bias = False)
+        self.to_qkv = nn.Conv1d(dim, hidden_dim * 3,1,bias = False)
 
         self.to_out = nn.Sequential(
-            nn.Conv1d(hidden_dim, dim, 1),
+            nn.Conv1d(hidden_dim, dim,1),
             LayerNorm(dim)
         )
 
@@ -249,8 +255,8 @@ class Attention(nn.Module):
         self.heads = heads
         hidden_dim = dim_head * heads
 
-        self.to_qkv = nn.Conv1d(dim, hidden_dim * 3, 1, bias = False)
-        self.to_out = nn.Conv1d(hidden_dim, dim, 1)
+        self.to_qkv = GraphConv(dim, hidden_dim * 3, bias = False)
+        self.to_out = GraphConv(hidden_dim, dim)
 
     def forward(self, x):
         b, c, n = x.shape
@@ -266,51 +272,7 @@ class Attention(nn.Module):
         out = rearrange(out, 'b h n d -> b (h d) n')
         return self.to_out(out)
 
-class STNkd(nn.Module): #PointNet's Spatial Transformer network to transform object pose into canonical space.
-    def __init__(self, k=64):
-        super(STNkd, self).__init__()
-        self.conv1 = torch.nn.Conv1d(k, 64, 1)
-        self.conv2 = torch.nn.Conv1d(64, 128, 1)
-        self.conv3 = torch.nn.Conv1d(128, 1024, 1)
-        self.fc1 = nn.Linear(1024, 512)
-        self.fc2 = nn.Linear(512, 256)
-        self.fc3 = nn.Linear(256, k*k)
-        self.relu = nn.ReLU()
 
-        self.bn1 = nn.BatchNorm1d(64)
-        self.bn2 = nn.BatchNorm1d(128)
-        self.bn3 = nn.BatchNorm1d(1024)
-        self.bn4 = nn.BatchNorm1d(512)
-        self.bn5 = nn.BatchNorm1d(256)
-
-        self.k = k
-
-    def forward(self, x):
-        batchsize = x.size()[0]
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = F.relu(self.bn3(self.conv3(x)))
-        x = torch.max(x, 2, keepdim=True)[0]
-        x = x.view(-1, 1024)
-
-        x = F.relu(self.bn4(self.fc1(x)))
-        x = F.relu(self.bn5(self.fc2(x)))
-        x = self.fc3(x)
-
-        iden = Variable(torch.from_numpy(np.eye(self.k).flatten().astype(np.float32))).view(1,self.k*self.k).repeat(batchsize,1)
-        if x.is_cuda:
-            iden = iden.cuda()
-        x = x + iden
-        x = x.view(-1, self.k, self.k)
-        return x
-def feature_transform_regularizer(trans):
-    d = trans.size()[1]
-    batchsize = trans.size()[0]
-    I = torch.eye(d)[None, :, :]
-    if trans.is_cuda:
-        I = I.cuda()
-    loss = torch.mean(torch.norm(torch.bmm(trans, trans.transpose(2,1)) - I, dim=(1,2)))
-    return loss
 # model
 #f3cf80224dc711052c5c27dde898d2e753147ad2
 class Unet1D(nn.Module):
@@ -326,25 +288,18 @@ class Unet1D(nn.Module):
         learned_variance = False,
         learned_sinusoidal_cond = False,
         random_fourier_features = False,
-        learned_sinusoidal_dim = 16,
-        use_dgcnn= False,
-        use_stn=False
+        learned_sinusoidal_dim = 16
     ):
         super().__init__()
 
         # determine dimensions
-        self.use_stn = use_stn
-        self.use_dgcnn= use_dgcnn
+
         self.channels = channels
         self.self_condition = self_condition
         input_channels = channels + 512
         self.attn = Attention(dim=512)
         init_dim = default(init_dim, dim)
-        #self.init_conv = nn.Conv1d(input_channels, init_dim, 1)
-        if not use_dgcnn:
-            self.init_conv = nn.Conv1d(input_channels, init_dim, 1)
-        else:
-            self.init_conv = DyanmicEdgeConv(input_channels, init_dim)
+        self.init_conv = GraphConv(input_channels, init_dim)
         
         dims = [init_dim, *map(lambda m: dim * m, dim_mults)]
         in_out = list(zip(dims[:-1], dims[1:]))
@@ -366,9 +321,9 @@ class Unet1D(nn.Module):
 
         self.time_mlp = nn.Sequential(
             sinu_pos_emb,
-            nn.Linear(fourier_dim, time_dim),
+            Linear(fourier_dim, time_dim),
             nn.GELU(),
-            nn.Linear(time_dim, time_dim)
+            Linear(time_dim, time_dim)
         )
 
         # layers
@@ -379,66 +334,45 @@ class Unet1D(nn.Module):
 
         for ind, (dim_in, dim_out) in enumerate(in_out):
             is_last = ind >= (num_resolutions - 1)
-            if not self.use_dgcnn:
-                self.downs.append(nn.ModuleList([
-                    block_klass(dim_in, dim_in, time_emb_dim = time_dim),
-                    block_klass(dim_in, dim_in, time_emb_dim = time_dim),
-                    Residual(PreNorm(dim_in, LinearAttention(dim_in))),
-                    nn.Conv1d(dim_in, dim_out, 1, padding = 0)
-                ]))
-            else:
-                self.downs.append(nn.ModuleList([
-                    block_klass(dim_in, dim_in, time_emb_dim = time_dim,use_dgcnn= self.use_dgcnn),
-                    block_klass(dim_in, dim_in, time_emb_dim = time_dim,use_dgcnn= self.use_dgcnn),
-                    Residual(LayerNorm(dim_in)),
-                    DyanmicEdgeConv(dim_in, dim_out)
-                ]))
 
-        if not self.use_dgcnn:
-            mid_dim = dims[-1]
-            self.mid_block1 = block_klass(mid_dim, mid_dim, time_emb_dim = time_dim)
-            self.mid_attn = Residual(PreNorm(mid_dim, Attention(mid_dim)))
-            self.mid_block2 = block_klass(mid_dim, mid_dim, time_emb_dim = time_dim)
-        else:
-            mid_dim = dims[-1]
-            self.mid_block1 = block_klass(mid_dim, mid_dim, time_emb_dim = time_dim,use_dgcnn= self.use_dgcnn)
-            self.mid_attn = Residual(PreNorm(mid_dim, Attention(mid_dim)))
-            self.mid_block2 = block_klass(mid_dim, mid_dim, time_emb_dim = time_dim,use_dgcnn= self.use_dgcnn)
+            self.downs.append(nn.ModuleList([
+                block_klass(dim_in, dim_in, time_emb_dim = time_dim),
+                block_klass(dim_in, dim_in, time_emb_dim = time_dim),
+                Residual(LayerNorm(dim_in)),
+                GraphConv(dim_in, dim_out)
+            ]))
+
+        mid_dim = dims[-1]
+        self.mid_block1 = block_klass(mid_dim, mid_dim, time_emb_dim = time_dim)
+        self.mid_attn = Residual(LayerNorm(mid_dim))
+        self.mid_block2 = block_klass(mid_dim, mid_dim, time_emb_dim = time_dim)
 
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out)):
             is_last = ind == (len(in_out) - 1)
-            #if not self.use_dgcnn:
+
             self.ups.append(nn.ModuleList([
                 block_klass(dim_out + dim_in, dim_out, time_emb_dim = time_dim),
                 block_klass(dim_out + dim_in, dim_out, time_emb_dim = time_dim),
-                Residual(PreNorm(dim_out, LinearAttention(dim_out))),
-                nn.Conv1d(dim_out, dim_in, 1, padding = 0)
-                ]))
-            # else:
-            #     self.ups.append(nn.ModuleList([
-            #         block_klass(dim_out + dim_in, dim_out, time_emb_dim = time_dim,use_dgcnn= self.use_dgcnn),
-            #         block_klass(dim_out + dim_in, dim_out, time_emb_dim = time_dim,use_dgcnn= self.use_dgcnn),
-            #         Residual(PreNorm(dim_out, LinearAttention(dim_out))),
-            #         DyanmicEdgeConv(dim_out, dim_in)
-            #     ]))
-
+                Residual(LayerNorm(dim_out)),
+                GraphConv(dim_out, dim_in)
+            ]))
 
         default_out_dim = channels * (1 if not learned_variance else 2)
         self.out_dim = default(out_dim, default_out_dim)
 
-        self.final_res_block = block_klass(dim * 2, dim, time_emb_dim = time_dim,use_dgcnn= self.use_dgcnn)
-        if not self.use_dgcnn:
-            self.final_conv = nn.Conv1d(dim, self.out_dim, 1)
-        else:
-            self.final_conv = DyanmicEdgeConv(dim, self.out_dim)
-        self.stn = STNkd(k=3)
+        self.final_res_block = block_klass(dim * 2, dim, time_emb_dim = time_dim)
+        self.final_conv = GraphConv(dim, self.out_dim)
+        
 
     def forward(self, x, time, x_self_cond = None):
         torch.autograd.set_detect_anomaly(True)
         #x_self_cond = self.attn(x_self_cond)
-        x = torch.cat((x_self_cond, x), dim = 1)
+        data = x.clone().to('cuda:0')
+        
 
-        x = self.init_conv(x)
+        data.pose = torch.cat((x_self_cond, data.pose), dim = 2)
+
+        x = self.init_conv(data.pose,data.edge_index)
         
 
         r = x.clone()
@@ -448,11 +382,11 @@ class Unet1D(nn.Module):
         h = []
 
         for block1, block2, attn, downsample in self.downs:
-            x = block1(x, t)
+            x = block1(x,data.edge_index, t)
             h.append(x)
 
-            x = block2(x, t)
-            x = attn(x)
+            x = block2(x,data.edge_index, t)
+            #x = attn(x)
             h.append(x)
 
             x = downsample(x)
@@ -463,30 +397,21 @@ class Unet1D(nn.Module):
 
         for block1, block2, attn, upsample in self.ups:
             x = torch.cat((x, h.pop()), dim = 1)
-            x = block1(x, t)
+            x = block1(x,data.edge_index, t)
 
             x = torch.cat((x, h.pop()), dim = 1)
-            x = block2(x, t)
-            x = attn(x)
+            x = block2(x,data.edge_index, t)
+            #x = attn(x)
 
             x = upsample(x)
 
         x = torch.cat((x, r), dim = 1)
 
         x = self.final_res_block(x, t)
-        x = self.final_conv(x)
-        if self.use_stn:
-            temp = x[:,0:3,:].clone()
-            #print(temp.shape)
-            trans = self.stn(temp)
-            #print(trans.shape)
-            temp = temp.transpose(2, 1)
-            #print(x)
-            temp = torch.bmm(temp, trans)
-            temp = temp.transpose(2, 1)
-            x[:,0:3,:] = temp
+        
+        
 
-        return x
+        return self.final_conv(x)
 
 # gaussian diffusion trainer class
 
@@ -743,12 +668,19 @@ class GaussianDiffusion1D(nn.Module):
         return img
 
     def q_sample(self, x_start, t, noise=None):
-        noise = default(noise, lambda: torch.randn_like(x_start))
+        pose_values = noise
+        noise = []
+        for i in range(x_start.pose.shape[0]):
+            #adj = kneighbors_graph(pose_values[i,:,:3].cpu().numpy(), 3, mode='connectivity').toarray()
+            noise.append(MyData(pose=pose_values[i,:,:],edge_index=x_start.edge_index))
+        noise = Batch.from_data_list(noise)
+        print(noise)
+        print(x_start)
+        #print(noise)
 
-        return (
-            extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start +
-            extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
-        )
+        #noise = default(noise, lambda: MyData(pose=pose_values,edge_index=torch.tensor(adjacency.nonzero())))
+        noisy_pose = extract(self.sqrt_alphas_cumprod, t, x_start.pose.permute(0,2,1)) * x_start.pose.permute(0,2,1) + extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.pose.permute(0,2,1).shape) * noise.pose.permute(0,2,1)
+        return Batch(pose = noisy_pose.permute(0,2,1),edge_index = x_start.edge_index)
 
     @property
     def loss_fn(self):
@@ -760,8 +692,9 @@ class GaussianDiffusion1D(nn.Module):
             raise ValueError(f'invalid loss type {self.loss_type}')
 
     def p_losses(self, x_start, x_self_cond, t, noise = None):
-        b, c, n = x_start.shape
-        noise = default(noise, lambda: torch.randn_like(x_start))
+        b, c, n = x_start.pose.shape#torch.amax(x_start.batch)+1,x_start.pose.shape[1],x_start.pose.shape[0]/(torch.amax(x_start.batch)+1)
+        noise = default(noise, lambda: torch.randn_like(x_start.pose))
+        
 
         # noise sample
 
@@ -798,11 +731,13 @@ class GaussianDiffusion1D(nn.Module):
         return loss.mean() #+ feature_transform_regularizer(trans)
 
     def forward(self, img, cond, *args, **kwargs):
-        b, c, n, device, seq_length = *img.shape, img.device, self.seq_length
+        #print(img.pose.shape)
+        
+        b, c, n, device, seq_length = img.pose.shape[0],img.pose.shape[2],img.pose.shape[1], 'cuda:0', self.seq_length
         assert n == seq_length, f'seq length must be {seq_length}'
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
 
-        img = normalize_to_neg_one_to_one(img)
+        img.pose = normalize_to_neg_one_to_one(img.pose)
         return self.p_losses(img,cond,t, *args, **kwargs)
 
 class Trainer(object):
@@ -823,11 +758,10 @@ class Trainer(object):
         amp = False,
         fp16 = False,
         split_batches = True,
-        convert_image_to = None,
-        use_wandb = False
+        convert_image_to = None
     ):
         super().__init__()
-        self.use_wandb = use_wandb
+
         self.accelerator = Accelerator(
             split_batches = split_batches,
             mixed_precision = 'fp16' if fp16 else 'no'
@@ -849,11 +783,11 @@ class Trainer(object):
 
         # dataset and dataloader
 
-        self.ds = PoseGen('train',overfit=False)
-        dl = DataLoader(self.ds, batch_size = train_batch_size, shuffle = True, pin_memory = True, num_workers = cpu_count())
+        self.ds = torch.load('/home/kaly/research/text2scene/datasets/graph-trainset.pt')
+        dl = DataLoader(self.ds, batch_size = train_batch_size, shuffle = True, pin_memory = True, num_workers = 0)
 
-        self.val_ds = PoseGen('val',overfit=False)
-        self.val_dl = DataLoader(self.val_ds, batch_size = 65, shuffle = True, pin_memory = True, num_workers = cpu_count())
+        self.val_ds = torch.load('/home/kaly/research/text2scene/datasets/graph-valset.pt')
+        self.val_dl = DataLoader(self.val_ds, batch_size = train_batch_size, shuffle = True, pin_memory = True, num_workers = 0)
 
         dl = self.accelerator.prepare(dl)
         self.dl = cycle(dl)
@@ -915,11 +849,10 @@ class Trainer(object):
             self.accelerator.scaler.load_state_dict(data['scaler'])
 
     def train(self):
-        if self.use_wandb:
-            wandb.init(project="posegen", entity="text2scene",name='pose_diffuse_baseline')
+        #wandb.init(project="posegen", entity="text2scene",name='pose_diffuse_stn')
         accelerator = self.accelerator
         device = 'cuda:0'
-        self.val()
+
         with tqdm(initial = self.step, total = self.train_num_steps, disable = not accelerator.is_main_process) as pbar:
 
             while self.step < self.train_num_steps:
@@ -927,12 +860,13 @@ class Trainer(object):
                 total_loss = 0.
 
                 for _ in range(self.gradient_accumulate_every):
-
-                    text,pose,size = next(self.dl)
-                    text,pose = text.to(device), pose.to(device)
+                    
+                    data = next(self.dl)
+                    data = data.to(device)
                     
                     with self.accelerator.autocast():
-                        loss = self.model(pose,text)
+                        #print(data)
+                        loss = self.model(data,data.y)
                         loss = loss / self.gradient_accumulate_every
                         total_loss += loss.item()
 
@@ -940,8 +874,7 @@ class Trainer(object):
 
                 accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
                 pbar.set_description(f'loss: {total_loss:.4f}')
-                if self.use_wandb:
-                    wandb.log({'total_loss':total_loss})
+                #wandb.log({'total_loss':total_loss})
 
                 accelerator.wait_for_everyone()
 
@@ -975,89 +908,21 @@ class Trainer(object):
     def val(self):
         with torch.no_grad():
             device ='cuda:0'
-            #print(len(self.val_dl))
+            print(len(self.val_dl))
             val_loss = 0.
 
-            for idx, (text,pose,size) in tqdm(enumerate(self.val_dl)):
-                text,pose = text.to(device), pose.to(device)
+            for idx, (data) in tqdm(enumerate(self.val_dl)):
+                data = data.to(device)
                 
                 
-                loss = self.model(pose,text)
+                loss = self.model(data,data.y)
                 #loss = loss 
                 val_loss += loss.item()
 
 
             # accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
             print(f'val_loss: {val_loss/len(self.val_dl):.4f}')
-            if self.use_wandb:
-                wandb.log({'val_loss': val_loss/len(self.val_dl)})
+            #wandb.log({'val_loss': val_loss/len(self.val_dl)})
 
+            
 
-
-
-#DGCNN implementation
-def knn(x, k):
-    inner = -2*torch.matmul(x.transpose(2, 1), x)
-    xx = torch.sum(x**2, dim=1, keepdim=True)
-    pairwise_distance = -xx - inner - xx.transpose(2, 1)
- 
-    idx = pairwise_distance.topk(k=k, dim=-1)[1]   # (batch_size, num_points, k)
-    return idx
-
-
-def get_graph_feature(x, k=40, idx=None):
-    batch_size = x.size(0)
-    num_points = x.size(2)
-    x = x.view(batch_size, -1, num_points)
-    if idx is None:
-        idx = knn(x[:,:3,:], k=k)   # (batch_size, num_points, k)
-    device = torch.device('cuda')
-
-    idx_base = torch.arange(0, batch_size, device=device).view(-1, 1, 1)*num_points
-
-    idx = idx + idx_base
-
-    idx = idx.view(-1)
- 
-    _, num_dims, _ = x.size()
-
-    x = x.transpose(2, 1).contiguous()   # (batch_size, num_points, num_dims)  -> (batch_size*num_points, num_dims) #   batch_size * num_points * k + range(0, batch_size*num_points)
-    feature = x.view(batch_size*num_points, -1)[idx, :]
-    feature = feature.view(batch_size, num_points, k, num_dims) 
-    x = x.view(batch_size, num_points, 1, num_dims).repeat(1, 1, k, 1)
-    
-    feature = torch.cat((feature-x, x), dim=3).permute(0, 3, 1, 2).contiguous()
-  
-    return feature       
-class DyanmicEdgeConv(nn.Module):
-    def __init__(self,in_channels,out_channels,k=3):
-        super(DyanmicEdgeConv, self).__init__()
-        
-        self.k = k
-        
-        self.bn1 = nn.BatchNorm2d(64)
-        
-        self.bn5 = nn.BatchNorm1d(out_channels)
-
-        self.conv1 = nn.Sequential(nn.Conv2d(in_channels*2, 64, kernel_size=1, bias=False),
-                                   self.bn1,
-                                   nn.LeakyReLU(negative_slope=0.2))
-        self.conv2 = nn.Sequential(nn.Conv2d(self.k, 1, kernel_size=1, bias=False),
-                                   nn.LeakyReLU(negative_slope=0.2))
-        
-        self.conv5 = nn.Sequential(WeightStandardizedConv2d(64, out_channels, kernel_size=1, bias=False),
-                                   self.bn5,
-                                   nn.LeakyReLU(negative_slope=0.2))
-    def forward(self, x):
-        batch_size = x.size(0)
-        x = get_graph_feature(x, k=self.k)
-        #print(x.shape)
-        x = self.conv1(x) #(batch_size, 64, num_points, k)
-        x = x.permute(0,3,2,1)
-        x = self.conv2(x) #(batch_size, 1, num_points, 64)
-        x1 = x.permute(0,3,2,1).squeeze(3) #(batch_size, 64, num_points)
-        #x1 = x.max(dim=-1, keepdim=False)[0]
-        
-        x = self.conv5(x1)
-        
-        return x

@@ -5,6 +5,7 @@ import trimesh
 from utils.shapenet import ShapeNetv2_Watertight_Scaled_Simplified_path
 from utils.pc_util import rotz
 import math 
+import trimesh
 
 import pytorch3d
 # datastructures
@@ -24,6 +25,8 @@ from matplotlib import pyplot as plt
 torch.pi = math.pi
 
 from pytorch3d.structures import join_meshes_as_scene
+np.random.seed(42)
+COLORS = np.random.randint(0,255,(44,3))
 
 import cv2
 device = 'cuda'
@@ -33,23 +36,25 @@ warnings.filterwarnings('ignore')
 def denormalize(pose):
     a = 0
     b = 1
-    max1 = torch.tensor([[[4.6341],
-                 [7.5061],
-                 [2.1705],
-                 [3.3867],
-                 [5.2126],
+    max1 = torch.tensor([[[1.4011],
+                 [6.3341],
+                 [17.7243],
+                 [2.6095],
+                 [4.4751],
                  [2.8320],
-                 [3.1415]]]).to(device)
-    min1 = torch.tensor([[[-3.9863],
-             [-7.5617],
-             [-0.3567],
-             [ 0.0000],
-             [ 0.0000],
-             [ 0.0000],
-             [-3.1416]]]).to(device)
+                 [3.1415],
+                 [44]]]).to(device)
+    min1 = torch.tensor([[[-11.1616],
+                [-8.7337],
+                [0.0000],
+                [ 0.0000],
+                [ 0.0000],
+                [ 0.0000],
+                [-3.1416],
+                [0]]]).to(device)
     # max1 = torch.tensor(7.5061).to(device)
     # min1 = torch.tensor(-7.5617).to(device)
-    pose[:7,:] = min1[0]+ ((pose[:7,:] -a) * (max1[0]-min1[0])/(b-a))
+    pose[:8,:] = min1[0]+ ((pose[:8,:] -a) * (max1[0]-min1[0])/(b-a))
     return pose
 
 def render_top_view(scene_mesh,show=False):
@@ -72,9 +77,9 @@ def render_top_view(scene_mesh,show=False):
         ),
         shader=HardPhongShader(device=device, cameras=cameras, lights=lights)
     )
-    distance = 12   # distance from camera to the object
-    elevation = 0.0   # angle of elevation in degrees
-    azimuth = 0.0  # No rotation so the camera is positioned on the +Z axis. 
+    distance = 7  # distance from camera to the object
+    elevation = 0   # angle of elevation in degrees
+    azimuth = 0  # No rotation so the camera is positioned on the +Z axis. 
 
     # Get the position of the camera based on the spherical angles
     R, T = look_at_view_transform(distance, elevation, azimuth, device=device)
@@ -151,8 +156,13 @@ def get_scene_list(poses, scenes):
             orientation = poses[outer_count][inner_count][6]
             axis_rectified = torch.tensor([[torch.cos(orientation), torch.sin(orientation), 0], [-torch.sin(orientation), torch.cos(orientation), 0], [0, 0, 1]])
             obj_points = np.array(obj_points.detach().cpu().numpy().dot(axis_rectified.detach().cpu().numpy())) + poses[outer_count][inner_count][0:3].detach().cpu().numpy()
-
-            verts_rgb = torch.ones_like(torch.tensor(obj_points),dtype= torch.float32)[None]  # (1, V, 3)
+            # pred_class = torch.round(poses[outer_count][inner_count][7])
+            # color = torch.tensor(COLORS)[pred_class]
+            # mesh = Meshes(verts=[torch.tensor(obj_points,dtype=torch.float32).to(device)],faces=[torch.tensor(tmp.faces_packed(),dtype=torch.float32).to(device)])
+            # sphere_verts_rgb = torch.full([mesh.get_mesh_verts_faces(0)[0].shape[0], 3], 0.5)
+            # for i in range(sphere_verts_rgb.shape[0]):
+            #     sphere_verts_rgb[i] = color
+            verts_rgb = torch.ones_like(torch.tensor(obj_points),dtype= torch.float32)[None] # (1, V, 3)
             textures = TexturesVertex(verts_features=verts_rgb.to(device))
 
             obj_list.append(Meshes(verts=[torch.tensor(obj_points,dtype=torch.float32).to(device)],faces=[torch.tensor(tmp.faces_packed(),dtype=torch.float32).to(device)],textures=textures))
@@ -163,3 +173,6 @@ def get_scene_list(poses, scenes):
         scene_list.append(join_meshes_as_scene(obj_list))
         outer_count+=1
     return scene_list
+
+
+

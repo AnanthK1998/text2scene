@@ -46,7 +46,7 @@ clip_model,_ = clip.load('ViT-B/32', 'cpu', jit=True)
 data = []
 for i in tqdm(train_scene_list):
     try:
-        rfd_data = rfd_data = pickle.load( open( CONF.PATH.DATA+ "/scannet/processed_data/"+ i+ "/bbox.pkl","rb"))
+        rfd_data = pickle.load( open( CONF.PATH.DATA+ "/scannet/processed_data/"+ i+ "/bbox.pkl","rb"))
     except:
         continue
     instance_ids=[]
@@ -103,12 +103,15 @@ for i in tqdm(train_scene_list):
         for pose_dict in rfd_data:
             if pose_dict['instance_id'] == object:
                 object_dict['object_data']['box3D'] = pose_dict['box3D']
+                object_dict['object_data']['cls_id'] = pose_dict['cls_id']
                 object_dict['object_data']['shapenet_catid'] = pose_dict['shapenet_catid']
                 object_dict['object_data']['shapenet_id'] = pose_dict['shapenet_id']
                 object_dict1['object_data']['box3D'] = pose_dict['box3D']
+                object_dict1['object_data']['cls_id'] = pose_dict['cls_id']
                 object_dict1['object_data']['shapenet_catid'] = pose_dict['shapenet_catid']
                 object_dict1['object_data']['shapenet_id'] = pose_dict['shapenet_id']
                 object_dict2['object_data']['box3D'] = pose_dict['box3D']
+                object_dict2['object_data']['cls_id'] = pose_dict['cls_id']
                 object_dict2['object_data']['shapenet_catid'] = pose_dict['shapenet_catid']
                 object_dict2['object_data']['shapenet_id'] = pose_dict['shapenet_id']
                 object_dict3['object_data']['box3D'] = pose_dict['box3D']
@@ -214,25 +217,16 @@ l.reverse()
 for idx in l:
     del data[idx]
 
+#Remove scenes with no floor layouts available
+l = np.load('/home/kaly/research/text2scene/datasets/null_scenecad.npy').tolist()
+l.reverse()
+for idx in l:
+    del data[idx]
+
 with open(CONF.PATH.DATA + '/scenegen_train.pkl', 'wb') as fp:
     pickle.dump(data, fp)
 
-shape_data=[]
-for scene in tqdm(data):
-    for i in scene['objects']:
-        
-        shape_dict={}
-        try:
-            embed = clip_model.encode_text(clip.tokenize(i['object_data']['text']))
-            shape_dict['text']=i['object_data']['text']
-            shape_dict['shapenet_catid']=i['object_data']['shapenet_catid']
-            shape_dict['shapenet_id']=i['object_data']['shapenet_id']
-            
-            shape_data.append(shape_dict)
-        except:
-            continue
-with open(CONF.PATH.DATA + '/shapegen_train.pkl', 'wb') as fp:
-    pickle.dump(shape_data, fp)
+
 
 #Validation
 data = []
@@ -267,26 +261,21 @@ for i in tqdm(val_scene_list):
     
     data.append(scene_dict)
     
-#ToDo: Add script to remove null scenes from validation
+
+val_l = [59]
+val_l.reverse()
+
+for idx in val_l:
+    del data[idx]
+
+#Remove scenes with no layout CADS
+val_l = np.load('/home/kaly/research/text2scene/datasets/null_scenecad_val.npy').tolist()
+val_l.reverse()
+for idx in val_l:
+    del data[idx]
+
     
 with open(CONF.PATH.DATA + '/scenegen_val.pkl', 'wb') as f:
     pickle.dump(data, f)
 
 
-val_shape_data=[]
-for scene in tqdm(data):
-    for i in scene['objects']:
-        
-        shape_dict={}
-        try:
-            embed = clip_model.encode_text(clip.tokenize(i['object_data']['text']))
-            shape_dict['text']=i['object_data']['text']
-            shape_dict['shapenet_catid']=i['object_data']['shapenet_catid']
-            shape_dict['shapenet_id']=i['object_data']['shapenet_id']
-            
-            val_shape_data.append(shape_dict)
-        except:
-            continue
-
-with open(CONF.PATH.DATA + '/shapegen_val.pkl', 'wb') as fp:
-    pickle.dump(val_shape_data, fp)

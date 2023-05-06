@@ -53,6 +53,8 @@ device = 'cuda:0'
 import warnings
 warnings.filterwarnings('ignore')
 
+
+
 class PoseGen(Dataset):
     def __init__(self, split="train",overfit=False,use_cache= False):
         self.split = split
@@ -110,14 +112,22 @@ class PoseGen(Dataset):
                     
                     tmesh = trimesh.load(shapenet_model)
 
-                    verts_rgb = torch.ones_like(torch.tensor(np.asarray(tmesh.vertices)),dtype= torch.float32)[None]  # (1, V, 3)
+                    verts_rgb = torch.ones_like(torch.tensor(np.asarray(tmesh.vertices)),dtype= torch.float32)[None]#*int(i['object_data']['shapenet_catid'])/10000  # (1, V, 3)
                     textures = TexturesVertex(verts_features=verts_rgb)
                     gt_meshes.append(Meshes(verts=[torch.tensor(np.asarray(tmesh.vertices),dtype=torch.float32)],faces=[torch.tensor(np.asarray(tmesh.faces),dtype=torch.float32)],textures=textures))
                     count+=1
                 except (KeyError,RuntimeError) as e : #sometimes text token context length>77, hence runtime error. skip those
                     continue
-            size = count+1
-                
+            size = count
+            #random permutation :)
+            # permuted_indices = torch.randperm(len(gt_meshes))
+            
+            # text_embeddings[:count,:] = text_embeddings[permuted_indices,:]
+            # box3D[:count,:] = box3D[permuted_indices,:]
+            # p_list = permuted_indices.tolist()
+            # gt_meshes = [gt_meshes[i] for i in p_list]
+            
+            #normalization
             text_embeddings = text_embeddings.permute(1,0)
             box3D = box3D.permute(1,0)
             box3D = a + ((box3D - min1[0]) * (b - a) / (max1[0] - min1[0])) #min-max norm to [-1,1]
