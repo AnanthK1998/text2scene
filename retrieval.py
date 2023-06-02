@@ -23,31 +23,36 @@ import pandas as pd
 
 def retrieve_bboxmeshes(prediction,database):
 
-    rows = prediction[3:6].detach().cpu().numpy()[:, None, :]
+    mod_pred = torch.zeros((5,40))
+    
 
-    columns = database.detach().cpu().numpy()[None, :, :] #1x12383x3
+    rows = database.detach().cpu().numpy()[:, None, :] #1x12383x3
+
+    columns = prediction[3:6].detach().cpu().numpy()[None, :, :] 
 
 
-    product_matrix = rows * columns
+  
 
-    dot_matrix = np.sum(product_matrix, axis = 2)
+    difference_matrix = rows - columns
 
-    row_norm = np.linalg.norm(rows, axis = 2)
-    column_norm = np.linalg.norm(columns, axis = 2)
-    norm_matrix = row_norm * column_norm
-
-    similarity_matrix = np.arccos(dot_matrix / norm_matrix)
+    similarity_matrix = np.linalg.norm(difference_matrix, axis = 2)
+    
 
     neighbours = np.argsort((similarity_matrix), axis = 0)
-    return similarity_matrix, neighbours
+    
+    return neighbours
 
 retrieval_set = pd.read_csv('/home/kaly/research/text2scene/datasets/retrieval_database.csv',usecols=['size','path','cls_id'])
 device = 'cuda:0'
 
-pred = torch.tensor(np.load('/home/kaly/research/text2scene/datasets/pred.npy')).to(device)
+pred = torch.tensor(np.load('/home/kaly/research/text2scene/datasets/pred.npy')).to(device)[0]
 pred[:,:8,:] = denormalize(pred[:,:8,:])
 pred[:,7:9,:] = torch.round(pred[:,7:9,:])
-print(retrieval_set)
+
+
+
+
+
 
 
 # rfd_dir = glob("/home/kaly/research/RfDNet/datasets/scannet/processed_data/*")
@@ -78,9 +83,9 @@ print(retrieval_set)
 
 
 
-# # gt = torch.tensor(np.load('/home/kaly/research/text2scene/datasets/gt.npy')).to(device)    
-# # gt[:,:8,:] = denormalize(gt[:,:8,:])
+gt = torch.tensor(np.load('/home/kaly/research/text2scene/datasets/gt.npy')).to(device)    
+gt[:,:8,:] = denormalize(gt[:,:8,:])
 
-# # print(gt[6,:,1])
-# print(pred[6,:,1])
+print(gt[6,:,1])
+print(pred[6,:,1])
 
